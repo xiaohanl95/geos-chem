@@ -547,7 +547,7 @@ CONTAINS
     ! Set to large placeholder values
     !----------------------------------------
     Input_Opt%Max_Families           = 250
-    Input_Opt%Max_AdvectSpc          = 600
+    Input_Opt%Max_AdvectSpc          = 630
 
     !----------------------------------------
     ! SIMULATION MENU fields
