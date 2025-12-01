@@ -35,8 +35,8 @@ add_library(GeosCore
   drydep_mod.F90
   dust_mod.F90
   lagrange_mod.F90
-  sect_aer_mod.F90
-  sect_aer_data_mod.F90
+  #sect_aer_mod.F90
+  #sect_aer_data_mod.F90
   emissions_mod.F90
   fast_jx_mod.F90
   fjx_interface_mod.F90
