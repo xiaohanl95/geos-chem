@@ -52,6 +52,7 @@ add_library(GeosCore
   land_mercury_mod.F90
   linear_chem_mod.F90
   linoz_mod.F90
+  lagrange_mod.F90
   mapping_mod.F90
   mercury_mod.F90
   mixing_mod.F90
@@ -67,6 +68,8 @@ add_library(GeosCore
   RnPbBe_mod.F90
   rpmares_mod.F90
   seasalt_mod.F90
+  # sect_aer_mod.F90
+  # sect_aer_data_mod.F90
   set_global_ch4_mod.F90
   sfcvmr_mod.F90
   sulfate_mod.F90
