@@ -58,11 +58,12 @@ PROGRAM GEOS_Chem
   USE TIMERS_MOD            ! For GEOS-Chem timers (optional)
   USE UnitConv_Mod          ! For species conc unit conversions
 
-
   !---------------------------------------------------
   ! Lagrange module
   !---------------------------------------------------
   USE Lagrange_Mod
+  
+  
   !--------------------------------------------------------------------------
   ! GEOS-Chem chemistry modules
   !--------------------------------------------------------------------------
@@ -795,12 +796,12 @@ PROGRAM GEOS_Chem
   ! NSTEP is the number of dynamic timesteps w/in the outer loop
   ! Timesteps are now retrieved in seconds (ewl, 2/6/2018)
   N_DYN_STEPS = 10800 / GET_TS_DYN()     ! 3hr interval
+  
   !===============================================
   ! Lagrange Module
   !===============================================
   CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
-
-
+  
   ! Start a new outer loop
   DO
 
@@ -914,14 +915,13 @@ PROGRAM GEOS_Chem
                RC             = RC                                          )
 
        ENDIF
-
+	   
        !===============================================
        ! Lagrange Module
        !===============================================
 
        CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-
-
+	   
        !=====================================================================
        !       ***** R U N   H E M C O   P H A S E   1 *****
        !
@@ -2015,11 +2015,12 @@ PROGRAM GEOS_Chem
        !=====================================================================
     ENDDO
   ENDDO
+
   !===============================================
   ! Lagrange Module
   !===============================================
   CALL lagrange_cleanup()
-
+  
   !==========================================================================
   !              ***** C L E A N U P   A N D   Q U I T *****
   !==========================================================================
