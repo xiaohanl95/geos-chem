@@ -148,7 +148,8 @@ MODULE Lagrange_Mod
   ! add 2 more slab grid to containing background concentration
 
   integer               :: IIPAR, JJPAR, LLPAR
-
+  
+  
   integer               :: n_slab_25, n_slab_50, n_slab_75
   integer               :: id_PASV_LA3, id_PASV_LA2, id_PASV_LA 
   integer               :: id_PASV_EU2, id_PASV_EU
@@ -195,7 +196,8 @@ MODULE Lagrange_Mod
 
   integer               :: Stop_inject ! 1: stop injecting; 0: keep injecting
                            ! used for contiuing injecting scenario
-
+  
+  INTEGER               :: nspec
 
   TYPE(Plume2d_list), POINTER :: Plume2d_tail, Plume2d_head
   TYPE(Plume1d_list), POINTER :: Plume1d_tail, Plume1d_head
@@ -255,7 +257,8 @@ CONTAINS
     TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d, Plume1d_prev
 
     REAL(fp) :: Dt
-
+	
+	
 
     Dt = GET_TS_DYN()
     N_parcel = NINT(132 *1000/Length_init /600*Dt)
@@ -652,7 +655,10 @@ CONTAINS
       !  For all the grid cells in the troposphere, let concentration to be zero
       IF(TROPP_sink == 1)THEN
       IF ( State_Met%PEDGE(i_lon,i_lat,i_lev) > State_Met%TROPP(i_lon,i_lat) ) THEN
-        State_Chm%Species(:)%Conc(i_lon,i_lat,i_lev) = 0.0
+        ! State_Chm%Species(:)%Conc(i_lon,i_lat,i_lev) = 0.0
+		DO nspec = 1, State_Chm%nSpecies
+			State_Chm%Species(nspec)%Conc(i_lon,i_lat,i_lev) = 0.0
+		END DO
       ENDIF
       ENDIF
 
@@ -2732,7 +2738,10 @@ CONTAINS
       !  For all the grid cells in the troposphere, let concentration to be zero
       IF(TROPP_sink == 1)THEN
       IF ( State_Met%PEDGE(i_lon,i_lat,i_lev)>State_Met%TROPP(i_lon,i_lat) ) THEN
-        State_Chm%Species(:)%Conc(i_lon,i_lat,i_lev) = 0.0
+        !State_Chm%Species(:)%Conc(i_lon,i_lat,i_lev) = 0.0
+		DO nspec = 1, State_Chm%nSpecies
+			State_Chm%Species(nspec)%Conc(i_lon,i_lat,i_lev) = 0.0
+		END DO
       ENDIF
       ENDIF
 
