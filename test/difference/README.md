@@ -20,7 +20,7 @@ where `<REF>` and `<DEV>` indicate the names of the integration tests that are b
 The script will compare diagnostic and restart files within each integration test run directory.  If no differences are found, you will see ouptut such as:
 
 ```console
-Checking gc_4x5_merra2_fullchem_<SIM>
+Checking MERRA2_4_5_test_plume_model_<SIM>
    -> No differences in OutputDir
    -> No differences in Restarts
 ```

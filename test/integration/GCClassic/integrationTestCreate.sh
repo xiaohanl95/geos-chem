@@ -212,7 +212,7 @@ if [[ "X${testsToRun}" == "XALL" ]]; then
     fi
 
     # 4x5 merra2 fullchem_LuoWd
-    dir="gc_4x5_merra2_fullchem_LuoWd"
+    dir="MERRA2_4_5_test_plume_model_LuoWd"
     create_rundir "1\n1\n1\n1\n1\n${rundirsDir}\n${dir}\nn\nn\n" "${log}"
 
     # 4x5 merra2 fullchem_aciduptake
@@ -299,7 +299,7 @@ if [[ "X${testsToRun}" == "XALL" ]]; then
     #==========================================================================
 
     # Configuration files
-    allDiagsDir="gc_4x5_merra2_fullchem_alldiags"
+    allDiagsDir="MERRA2_4_5_test_plume_model_alldiags"
     extDataDir=$(grep "GC_DATA_ROOT" "${HOME}/.geoschem/config")
     extDataDir=${extDataDir/export GC_DATA_ROOT\=/}
     pfDat="${geosChemDir}/test/shared/alldiags/Planeflight.dat.20190701"
@@ -307,7 +307,7 @@ if [[ "X${testsToRun}" == "XALL" ]]; then
     # Copy the fullchem_benchmark rundir to fullchem_alldiags
     echo "... ${itRoot}/rundirs/${allDiagsDir}"
     cd "${rundirsDir}"
-    cp -r "gc_4x5_merra2_fullchem_benchmark" "${allDiagsDir}"
+    cp -r "MERRA2_4_5_test_plume_model_benchmark" "${allDiagsDir}"
     cd "${allDiagsDir}"
 
     # Turn on all collections except RRTMG and Tomas collections (which
@@ -339,11 +339,11 @@ if [[ "X${testsToRun}" == "XALL" ]]; then
     # Create dryrun directories by direct copy
     dirs=( "gc_4x5_merra2_aerosol"              \
            "gc_4x5_merra2_carbon"               \
-	   "gc_4x5_merra2_fullchem"             \
-           "gc_4x5_merra2_fullchem_APM"         \
+	   "MERRA2_4_5_test_plume_model"             \
+           "MERRA2_4_5_test_plume_model_APM"         \
            "gc_4x5_merra2_47L_fullchem_TOMAS15" \
-           "gc_4x5_merra2_fullchem_benchmark"   \
-           "gc_4x5_merra2_fullchem_RRTMG"       \
+           "MERRA2_4_5_test_plume_model_benchmark"   \
+           "MERRA2_4_5_test_plume_model_RRTMG"       \
            "gc_4x5_merra2_Hg"                   \
            "gc_4x5_merra2_metals"               \
            "gc_4x5_merra2_tagCO"                \

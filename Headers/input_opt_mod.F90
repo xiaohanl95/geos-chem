@@ -29,7 +29,16 @@ MODULE Input_Opt_Mod
   PUBLIC :: Cleanup_Input_Opt
 !
 ! !PUBLIC DATA MEMBERS:
-!
+  !=========================================================================
+  ! Derived type for plume source
+  !=========================================================================
+  TYPE, PUBLIC :: PlumeSource_t
+    REAL(fp)           :: lat 
+    REAL(fp)           :: lon
+    REAL(fp)           :: lev 
+    REAL(fp)           :: rate 
+    CHARACTER(LEN=255) :: species
+  END TYPE PlumeSource_t
   !=========================================================================
   ! Derived type for Input Options
   !=========================================================================
@@ -255,6 +264,21 @@ MODULE Input_Opt_Mod
      REAL(fp)                    :: CO2_REF
      REAL(fp)                    :: RS_SCALE
      INTEGER                     :: RA_Alt_Above_Sfc
+
+     !----------------------------------------
+     ! LAGRANGIAN AND PLUME SOURCES MENU fields
+     !----------------------------------------
+     LOGICAL                     :: PlumeInjection_Activate
+     LOGICAL                     :: PlumeInjection_Diag
+     LOGICAL                     :: LagrangianModel_Activate
+     INTEGER                     :: Plume_sources_num
+     CHARACTER(LEN=255)          :: Plume_sources_diag_dir
+     !REAL(8), ALLOCATABLE        :: Plume_lat(:)
+     !REAL(8), ALLOCATABLE        :: Plume_lon(:)
+     !REAL(8), ALLOCATABLE        :: Plume_lev(:)
+     !REAL(8), ALLOCATABLE        :: Plume_rate(:)
+     !CHARACTER(LEN=16), ALLOCATABLE :: Plume_species(:)
+     TYPE(PlumeSource_t), ALLOCATABLE :: Plume_sources(:)
 
      !----------------------------------------
      ! GAMAP MENU fields
@@ -778,6 +802,15 @@ CONTAINS
     Input_Opt%RS_SCALE               = 1.0_fp
     Input_Opt%RA_Alt_Above_Sfc       = 10       ! default height
 
+    !----------------------------------------
+    ! LAGRANGIAN MENU fields
+    !----------------------------------------
+    Input_Opt%PlumeInjection_Activate  = .FALSE.
+    Input_Opt%PlumeInjection_Diag      = .FALSE.
+    Input_Opt%LagrangianModel_Activate = .FALSE.
+    Input_Opt%Plume_sources_num        = 0
+    Input_Opt%Plume_sources_diag_dir   = ''
+    
     !----------------------------------------
     ! OUTPUT MENU fields
     !----------------------------------------

@@ -15,7 +15,7 @@ MODULE Input_Mod
 !
 ! !USES:
 !
-  USE CharPak_Mod, ONLY : MaxDim  => MaxStrLen
+  USE CharPak_Mod, ONLY : MaxDim  => MaxStrLen, CStrip, StrSplit, CleanText
   USE QfYaml_Mod
   USE Precision_Mod
 
@@ -227,7 +227,15 @@ CONTAINS
        CALL QFYAML_CleanUp( ConfigAnchored )
        RETURN
     ENDIF
-
+    ! lagrangian settings
+    CALL Config_Lagrangian( Config, Input_Opt, RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error in "Config_Lagrangian"!'
+       CALL GC_Error( errMsg, RC, thisLoc  )
+       CALL QFYAML_CleanUp( Config         )
+       CALL QFYAML_CleanUp( ConfigAnchored )
+       RETURN
+    ENDIF
     !========================================================================
     ! Get settings for specialty simulations from the YAML Config object
     !========================================================================
@@ -3862,6 +3870,221 @@ CONTAINS
 110 FORMAT( A, A   )
 
   END SUBROUTINE Config_ObsPack
+!EOC
+!------------------------------------------------------------------------------
+!                  GEOS-Chem Global Chemical Transport Model                  !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: config_lagrangian
+!
+! !DESCRIPTION: Copies lagrangian model settings from the Config object
+!  to Input_Opt, and does necessary checks.
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE Config_Lagrangian( Config, Input_Opt, RC )
+!
+! !USES:
+!
+    USE ErrCode_Mod
+    USE Input_Opt_Mod,  ONLY : OptInput
+    USE RoundOff_Mod,  ONLY : Cast_and_RoundOff
+!
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    TYPE(QFYAML_t), INTENT(INOUT) :: Config      ! YAML Config object
+    TYPE(OptInput), INTENT(INOUT) :: Input_Opt   ! Input options
+!
+! !OUTPUT PARAMETERS:
+!
+    INTEGER,        INTENT(OUT)   :: RC          ! Success or failure
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    ! Scalars
+    INTEGER                      :: n_src     ! number of point sources
+    INTEGER, PARAMETER           :: n_src_properties = 4  ! number of source properties, lat,lon,lev, rate
+    INTEGER                      :: I, N
+    INTEGER                      :: v_int
+    LOGICAL                      :: v_bool
+    CHARACTER(LEN=QFYAML_StrLen) :: v_str
+
+    ! Arrays
+    REAL(yp)                     :: a_real(n_src_properties)
+
+    ! Strings
+    CHARACTER(LEN=255)           :: thisLoc
+    CHARACTER(LEN=512)           :: errMsg
+    CHARACTER(LEN=QFYAML_StrLen) :: key
+
+    ! Initialize
+    RC      = GC_SUCCESS
+    errMsg  = ''
+    thisLoc = ' -> at Config_Lagrangian (in module GeosCore/input_mod.F90)'
+
+    !------------------------------------------------------------------------
+    ! Turn on plume injection?
+    !------------------------------------------------------------------------
+    key    = "Plume_sources%Plume_injection%activate"
+    v_bool = MISSING_BOOL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_bool, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeInjection_Activate = v_bool
+
+    !------------------------------------------------------------------------
+    ! Turn on plume injection diagnostic?
+    !------------------------------------------------------------------------
+    key    = "Plume_sources%Plume_injection%emission_diagnostics"
+    v_bool = MISSING_BOOL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_bool, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeInjection_Diag = v_bool
+    !------------------------------------------------------------------------
+    ! Plume injection diagnostic path
+    !------------------------------------------------------------------------
+    key    = "Plume_sources%Plume_injection%emission_diagnostics_path"
+    v_str = MISSING_STR
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_str, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Plume_sources_diag_dir = TRIM( v_str )
+    !------------------------------------------------------------------------
+    ! Use Lagrangian modoel?
+    !------------------------------------------------------------------------
+    key    = "Plume_sources%lagrangian_model%activate"
+    v_bool = MISSING_BOOL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_bool, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%LagrangianModel_Activate = v_bool
+
+    !------------------------------------------------------------------------
+    ! Get number of sources
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%num_of_sources"
+    v_int = MISSING_INT
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_int, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Plume_sources_num = v_int
+    !------------------------------------------------------------------------
+    ! Get sources information
+    !------------------------------------------------------------------------
+    n_src = Input_Opt%Plume_sources_num
+    IF (n_src > 0) THEN
+       ALLOCATE( Input_Opt%Plume_sources(n_src), STAT=RC )
+       IF (RC /= 0) THEN
+          errMsg = 'Error allocating Plume_sources'
+          CALL GC_Error( errMsg, RC, thisLoc )
+          RETURN
+       END IF
+       ! Initialize
+       DO N = 1, n_src
+          Input_Opt%Plume_sources(N)%lat     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%lon     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%lev     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%rate    = MISSING_REAL
+          Input_Opt%Plume_sources(N)%species = MISSING_STR
+       END DO
+    END IF
+
+    IF (n_src > 0) THEN
+      DO N = 1, n_src
+         WRITE(key,'("Plume_sources%source_info%source",I0,"_species")') N
+         v_str = MISSING_STR
+         CALL QFYAML_Add_Get( Config, TRIM( key ), v_str, "", RC )
+         IF ( RC /= GC_SUCCESS ) THEN
+            errMsg = 'Error parsing ' // TRIM( key ) // '!'
+            CALL GC_Error( errMsg, RC, thisLoc )
+            RETURN
+         ENDIF
+         !WRITE(6,*) "v_str: ", v_str 
+         Input_Opt%Plume_sources(N)%species = TRIM( v_str )
+
+         WRITE(key,'("Plume_sources%source_info%source",I0,"_info")') N
+         a_real = MISSING_REAL
+         CALL QFYAML_Add_Get( Config, TRIM( key ), a_real, "", RC )
+         IF ( RC /= GC_SUCCESS ) THEN
+            errMsg = 'Error parsing ' // TRIM( key ) // '!'
+            CALL GC_Error( errMsg, RC, thisLoc )
+            RETURN
+         ENDIF
+         Input_Opt%Plume_sources(N)%lat     = a_real(1)
+         Input_Opt%Plume_sources(N)%lon     = a_real(2)
+         Input_Opt%Plume_sources(N)%lev     = a_real(3)
+         Input_Opt%Plume_sources(N)%rate    = a_real(4)
+      ENDDO
+    ENDIF
+    
+    !print out source properties for debug purposes
+    !WRITE(6,*) "Plume source debug output:"
+    !DO N = 1, n_src
+    !   WRITE(6,'(A,I3)') "Source index: ", N
+    !   WRITE(6,'(A,F10.3)') "   lat: ",     Input_Opt%Plume_sources(N)%lat
+    !   WRITE(6,'(A,F10.3)') "   lon: ",     Input_Opt%Plume_sources(N)%lon
+    !   WRITE(6,'(A,F10.3)') "   lev: ",     Input_Opt%Plume_sources(N)%lev
+    !   WRITE(6,'(A,F10.3)') "   rate: ",    Input_Opt%Plume_sources(N)%rate
+    !   WRITE(6,'(A,A)')     "   species: ", Input_Opt%Plume_sources(N)%species
+    !END DO
+    !========================================================================
+    ! Print to screen
+    !========================================================================
+    IF( Input_Opt%amIRoot ) THEN
+       WRITE( 6, 90  ) 'PLUME MODEL SETTINGS'
+       WRITE( 6, 95  ) '----------------'
+       WRITE( 6, 100 ) 'Turn on plume injection? : ',                        &
+                        Input_Opt%PlumeInjection_Activate
+       WRITE( 6, 100 ) 'Turn on plume injection diagnostic? : ',             &
+                        Input_Opt%PlumeInjection_Diag
+       WRITE( 6, 110 ) 'Plume injection diagnostic path?    : ',             &
+                        TRIM( Input_Opt%Plume_sources_diag_dir  )
+       WRITE( 6, 100 ) 'Turn on lagrangian model? : ',                       &
+                        Input_Opt%LagrangianModel_Activate
+       WRITE( 6, 105 ) 'Number of sources    : ', Input_Opt%Plume_sources_num
+       ! print information of each sources one by one
+       WRITE( 6, 95  ) '------------------------------------------------'
+       WRITE(6, 120) 'No.', 'lat', 'lon', 'lev', 'rate', 'species'
+       DO N = 1, n_src
+          WRITE(6,121) N,                                                    &
+          Input_Opt%Plume_sources(N)%lat,                                    &
+          Input_Opt%Plume_sources(N)%lon,                                    &
+          Input_Opt%Plume_sources(N)%lev,                                    &
+          Input_Opt%Plume_sources(N)%rate,                                   &
+          TRIM(Input_Opt%Plume_sources(N)%species)
+       END DO
+       WRITE( 6, 95  ) '------------------------------------------------'
+    ENDIF
+90  FORMAT( /, A                 )
+95  FORMAT( A                    )
+100 FORMAT( A, L5                )
+105 FORMAT( A, I0              )
+110 FORMAT( A, A )
+120 FORMAT(A8,1X,"|", A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
+121 FORMAT(I8,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A) 
+  END SUBROUTINE Config_Lagrangian
 !EOC
 !------------------------------------------------------------------------------
 !                  GEOS-Chem Global Chemical Transport Model                  !

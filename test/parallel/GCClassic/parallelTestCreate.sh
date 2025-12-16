@@ -209,7 +209,7 @@ if [[ "X${testsToRun}" == "XALL" ]]; then
     fi
 
     # 4x5 merra2 fullchem_LuoWd
-    dir="gc_4x5_merra2_fullchem_LuoWd"
+    dir="MERRA2_4_5_test_plume_model_LuoWd"
     create_rundir "1\n1\n1\n1\n1\n${rundirsDir}\n${dir}\nn\nn\n" "${log}"
 
     # 4x5 merra2 fullchem_aciduptake

@@ -424,7 +424,11 @@ CONTAINS
       WRITE(6,'(a)') ' WARNING: all the initial concentration is set as 0 now'
       WRITE(6,'(a)') '********************************************************'
       WRITE(6,'(a)') ' '
-
+	  ! debug purpose, BZ, does species database and SpecData contains the same species and order?
+	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU  = ', id_PASV_EU, &
+            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU)%Info%Name)
+	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2  = ', id_PASV_EU2, &
+            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
       id_PASV_EU  = State_Chm%nAdvect-1
       id_PASV_EU2 = State_Chm%nAdvect
 
