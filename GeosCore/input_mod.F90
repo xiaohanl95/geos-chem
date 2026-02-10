@@ -3909,10 +3909,11 @@ CONTAINS
 !
     ! Scalars
     INTEGER                      :: n_src     ! number of point sources
-    INTEGER, PARAMETER           :: n_src_properties = 4  ! number of source properties, lat,lon,lev, rate
+    INTEGER, PARAMETER           :: n_src_properties = 5  ! number of source properties, lat1, lat2, lon,lev, rate
     INTEGER                      :: I, N
     INTEGER                      :: v_int
     LOGICAL                      :: v_bool
+    REAL(yp)                     :: v_real
     CHARACTER(LEN=QFYAML_StrLen) :: v_str
 
     ! Arrays
@@ -3977,7 +3978,66 @@ CONTAINS
        RETURN
     ENDIF
     Input_Opt%LagrangianModel_Activate = v_bool
-
+    !------------------------------------------------------------------------
+    ! Turn on trop sink ?
+    !------------------------------------------------------------------------
+    key    = "Plume_sources%lagrangian_model%trop_sink"
+    v_bool = MISSING_BOOL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_bool, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%TropSink_Activate = v_bool
+    !------------------------------------------------------------------------
+    ! Get number of x grid in 2d plume segment
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%nx_2d"
+    v_int = MISSING_INT
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_int, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeGrid2d_nx = v_int
+    !------------------------------------------------------------------------
+    ! Get number of y grid in 2d plume segment
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%ny_2d"
+    v_int = MISSING_INT
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_int, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeGrid2d_ny = v_int
+    !------------------------------------------------------------------------
+    ! Get dx grid in 2d plume segment
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%dx_2d"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeGrid2d_dx = v_real
+    !------------------------------------------------------------------------
+    ! Get dy grid in 2d plume segment
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%dy_2d"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%PlumeGrid2d_dy = v_real
     !------------------------------------------------------------------------
     ! Get number of sources
     !------------------------------------------------------------------------
@@ -4003,11 +4063,12 @@ CONTAINS
        END IF
        ! Initialize
        DO N = 1, n_src
-          Input_Opt%Plume_sources(N)%lat     = MISSING_REAL
-          Input_Opt%Plume_sources(N)%lon     = MISSING_REAL
-          Input_Opt%Plume_sources(N)%lev     = MISSING_REAL
-          Input_Opt%Plume_sources(N)%rate    = MISSING_REAL
-          Input_Opt%Plume_sources(N)%species = MISSING_STR
+          Input_Opt%Plume_sources(N)%lat1     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%lat2     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%lon      = MISSING_REAL
+          Input_Opt%Plume_sources(N)%lev      = MISSING_REAL
+          Input_Opt%Plume_sources(N)%rate     = MISSING_REAL
+          Input_Opt%Plume_sources(N)%species  = MISSING_STR
        END DO
     END IF
 
@@ -4032,10 +4093,11 @@ CONTAINS
             CALL GC_Error( errMsg, RC, thisLoc )
             RETURN
          ENDIF
-         Input_Opt%Plume_sources(N)%lat     = a_real(1)
-         Input_Opt%Plume_sources(N)%lon     = a_real(2)
-         Input_Opt%Plume_sources(N)%lev     = a_real(3)
-         Input_Opt%Plume_sources(N)%rate    = a_real(4)
+         Input_Opt%Plume_sources(N)%lat1     = a_real(1)
+         Input_Opt%Plume_sources(N)%lat2     = a_real(2)
+         Input_Opt%Plume_sources(N)%lon      = a_real(3)
+         Input_Opt%Plume_sources(N)%lev      = a_real(4)
+         Input_Opt%Plume_sources(N)%rate     = a_real(5)
       ENDDO
     ENDIF
     
@@ -4063,13 +4125,21 @@ CONTAINS
                         TRIM( Input_Opt%Plume_sources_diag_dir  )
        WRITE( 6, 100 ) 'Turn on lagrangian model? : ',                       &
                         Input_Opt%LagrangianModel_Activate
+       WRITE( 6, 100 ) 'Turn on tropospheric sink? : ',                      &
+                        Input_Opt%TropSink_Activate
+       WRITE(6,*) 'Plume segmentation 2D grid:',                             &
+           ' nx=', Input_Opt%PlumeGrid2d_nx,                                 &
+           ' ny=', Input_Opt%PlumeGrid2d_ny,                                 &
+           ' dx=', Input_Opt%PlumeGrid2d_dx,                                 &
+           ' dy=', Input_Opt%PlumeGrid2d_dy
        WRITE( 6, 105 ) 'Number of sources    : ', Input_Opt%Plume_sources_num
        ! print information of each sources one by one
        WRITE( 6, 95  ) '------------------------------------------------'
-       WRITE(6, 120) 'No.', 'lat', 'lon', 'lev', 'rate', 'species'
+       WRITE(6, 120) 'No.', 'lat1', 'lat2', 'lon', 'lev', 'rate', 'species'
        DO N = 1, n_src
           WRITE(6,121) N,                                                    &
-          Input_Opt%Plume_sources(N)%lat,                                    &
+          Input_Opt%Plume_sources(N)%lat1,                                   &
+          Input_Opt%Plume_sources(N)%lat2,                                   &
           Input_Opt%Plume_sources(N)%lon,                                    &
           Input_Opt%Plume_sources(N)%lev,                                    &
           Input_Opt%Plume_sources(N)%rate,                                   &
@@ -4082,8 +4152,8 @@ CONTAINS
 100 FORMAT( A, L5                )
 105 FORMAT( A, I0              )
 110 FORMAT( A, A )
-120 FORMAT(A8,1X,"|", A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
-121 FORMAT(I8,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A) 
+120 FORMAT(A8,1X,"|", A8,1X,"|",A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
+121 FORMAT(I8,1X,"|",F8.3,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A) 
   END SUBROUTINE Config_Lagrangian
 !EOC
 !------------------------------------------------------------------------------

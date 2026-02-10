@@ -33,7 +33,8 @@ MODULE Input_Opt_Mod
   ! Derived type for plume source
   !=========================================================================
   TYPE, PUBLIC :: PlumeSource_t
-    REAL(fp)           :: lat 
+    REAL(fp)           :: lat1
+    REAL(fp)           :: lat2 
     REAL(fp)           :: lon
     REAL(fp)           :: lev 
     REAL(fp)           :: rate 
@@ -271,6 +272,7 @@ MODULE Input_Opt_Mod
      LOGICAL                     :: PlumeInjection_Activate
      LOGICAL                     :: PlumeInjection_Diag
      LOGICAL                     :: LagrangianModel_Activate
+     LOGICAL                     :: TropSink_Activate
      INTEGER                     :: Plume_sources_num
      CHARACTER(LEN=255)          :: Plume_sources_diag_dir
      !REAL(8), ALLOCATABLE        :: Plume_lat(:)
@@ -279,7 +281,10 @@ MODULE Input_Opt_Mod
      !REAL(8), ALLOCATABLE        :: Plume_rate(:)
      !CHARACTER(LEN=16), ALLOCATABLE :: Plume_species(:)
      TYPE(PlumeSource_t), ALLOCATABLE :: Plume_sources(:)
-
+     INTEGER                     :: PlumeGrid2d_nx
+     INTEGER                     :: PlumeGrid2d_ny
+     REAL(fp)                    :: PlumeGrid2d_dx
+     REAL(fp)                    :: PlumeGrid2d_dy
      !----------------------------------------
      ! GAMAP MENU fields
      !----------------------------------------
@@ -808,8 +813,13 @@ CONTAINS
     Input_Opt%PlumeInjection_Activate  = .FALSE.
     Input_Opt%PlumeInjection_Diag      = .FALSE.
     Input_Opt%LagrangianModel_Activate = .FALSE.
+    Input_Opt%TropSink_Activate        = .FALSE.
     Input_Opt%Plume_sources_num        = 0
+    Input_Opt%PlumeGrid2d_nx           = 0
+    Input_Opt%PlumeGrid2d_ny           = 0
     Input_Opt%Plume_sources_diag_dir   = ''
+    Input_Opt%PlumeGrid2d_dx           = 0.0_fp
+    Input_Opt%PlumeGrid2d_dy           = 0.0_fp
     
     !----------------------------------------
     ! OUTPUT MENU fields
