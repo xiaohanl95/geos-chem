@@ -38,44 +38,52 @@
 !  	  MW_g: 98.0
 
 
+! -----Notes by Bingqing Zhang ---------------
+! Dec 16, 2025, Bingqing Zhang
+! This code was updated to read point-source emission information and to
+! control activation of the Lagrangian model through the geoschem_config.yml
+! file, removing the need for hard-coded emission settings.
+!
+! at a start, I assume all injection occur at the same location, only species are different, so I don't handle plume seg interaction
+! Plume location will only initilize based on the first source location
+!
+! Known issue: in order to call do_chemistry module, I stored concentration of all chemical species in plume seg, which might require extremely large memory
+
 
 
 
 MODULE Plume_list
 
   USE precision_mod
+  IMPLICIT NONE
+  PRIVATE
+  PUBLIC :: Plume2d_list, Plume1d_list
 
   TYPE :: Plume2d_list
-    integer :: IsNew ! 1: the plume is new injected
-    integer :: label ! injected rank
+    INTEGER :: IsNew     = MISSING_INT ! 1: the plume is new injected
+    INTEGER :: label     = MISSING_INT! injected rank
 
-    real(fp) :: LON, LAT, LEV
-    real(fp) :: LENGTH, ALPHA
-    real(fp) :: LIFE
+    REAL(fp) :: LON = MISSING, LAT = MISSING, LEV = MISSING
+    REAL(fp) :: LENGTH = MISSING, ALPHA = MISSING
+    REAL(fp) :: LIFE = MISSING
+    REAL(fp) :: PDX = MISSING, PDY = MISSING
+    REAL(fp), DIMENSION(:,:,:), POINTER :: CONCNT2d => NULL() ! [n_x_max, n_y_max, n_species]
 
-    real(fp) :: PDX, PDY
-    real(fp), DIMENSION(:,:,:), POINTER :: CONCNT2d 
-    ! [n_x_max, n_y_max, n_species]
-
-
-    TYPE(Plume2d_list), POINTER :: next
+    TYPE(Plume2d_list), POINTER :: next => NULL()
   END TYPE
 
 
   TYPE :: Plume1d_list
-    integer :: label ! injected rank
-    integer :: Is_transfer ! if =1, transfer to the host Euletian model
+    INTEGER :: label         = MISSING_INT ! injected rank
+    INTEGER :: Is_transfer   = MISSING_INT ! if =1, transfer to the host Euletian model
 
+    REAL(fp) :: LON = MISSING, LAT = MISSING, LEV = MISSING
+    REAL(fp) :: LENGTH = MISSING, ALPHA = MISSING
+    REAL(fp) :: LIFE = MISSING
+    REAL(fp) :: RA = MISSING, RB = MISSING, THETA = MISSING
+    REAL(fp), DIMENSION(:,:), POINTER :: CONCNT1d => NULL() ! [n_slab_max,n_species]
 
-    real(fp) :: LON, LAT, LEV
-    real(fp) :: LENGTH, ALPHA
-    real(fp) :: LIFE
-
-    real(fp) :: RA, RB, THETA
-    real(fp), DIMENSION(:,:), POINTER :: CONCNT1d ! [n_slab_max,n_species]
-
-
-    TYPE(Plume1d_list), POINTER :: next
+    TYPE(Plume1d_list), POINTER :: next => NULL()
   END TYPE
 
 END MODULE Plume_list
@@ -85,126 +93,90 @@ END MODULE Plume_list
 MODULE Lagrange_Mod
 
   USE Plume_list
-
-  USE precision_mod
+  USE PRECISION_MOD
   USE ERROR_MOD
-  USE ErrCode_Mod
+  USE ERRCODE_MOD
   USE PhysConstants,   ONLY : PI, Re, g0, AIRMW, AVO, BOLTZ
-!  USE CMN_SIZE_Mod,    ONLY : IIPAR, JJPAR, LLPAR
-
-  USE TIME_MOD,        ONLY : GET_YEAR
-  USE TIME_MOD,        ONLY : GET_MONTH
-  USE TIME_MOD,        ONLY : GET_DAY
-  USE TIME_MOD,        ONLY : GET_HOUR
-  USE TIME_MOD,        ONLY : GET_MINUTE
-  USE TIME_MOD,        ONLY : GET_SECOND
-  USE UnitConv_Mod,    ONLY : Convert_Spc_Units, MOLECULES_SPECIES_PER_CM3
+  USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
+  USE UNITCONV_MOD    
+  USE INPUT_OPT_MOD,   ONLY : PlumeSource_t
 
   IMPLICIT NONE
-
+  PRIVATE
 
   ! !PUBLIC MEMBER FUNCTIONS:
   PUBLIC :: lagrange_init
   PUBLIC :: plume_inject
-!  PUBLIC :: lagrange_run
-!  PUBLIC :: plume_run
-!  PUBLIC :: lagrange_write_std
   PUBLIC :: lagrange_cleanup
 
   ! PUBLIC VARIABLES:
-
   PUBLIC :: n_x_max, n_y_max
   PUBLIC :: n_x_mid, n_y_mid
-
   PUBLIC :: n_slab_max, n_slab_25, n_slab_50, n_slab_75
-
   PUBLIC :: use_lagrange
+  ! variables read from geoschem_config.yml
+  LOGICAL                               :: use_lagrange
+  LOGICAL                               :: plume_inject_on 
+  LOGICAL                               :: plume_diag
+  LOGICAL                               :: TROPP_sink
+  INTEGER                               :: Num_of_sources
+  INTEGER                               :: n_x_max            !number of x grids in 2D, should be (9 x odd)
+  INTEGER                               :: n_y_max            !number of y grids in 2D, should be (9 x odd)
+  INTEGER                               :: n_species          
+  TYPE(PlumeSource_t), ALLOCATABLE      :: Plume_sources(:)
+  REAL(fp)                              :: Dx_init
+  REAL(fp)                              :: Dy_init
+  REAL(fp)                              :: Length_init   ! m
 
-  integer               :: use_lagrange = 1
-  integer               :: TROPP_sink = 0
-  integer               :: Volume_Sort  = 1 
-  ! 1 = use SortList() function, transfer largest (not oldest) plume segment for
-  ! volume criterion
 
-  integer               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
-  real(fp)		:: Entropy0	 ! perfect entropy without diffusion
+  ! Other variables
+  INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
+  INTEGER               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
+  REAL(fp)		          :: Entropy0	 ! perfect entropy without diffusion
+  INTEGER               :: IIPAR, JJPAR, LLPAR
+  INTEGER               :: n_x_mid, n_y_mid, n_x_mid2, n_y_mid2 
+  INTEGER               :: n_x_max2, n_y_max2 
+  INTEGER               :: n_slab_25, n_slab_50, n_slab_75
+  INTEGER               :: n_slab_max, n_slab_max2
+  INTEGER               :: N_parcel   ! 131        
+  INTEGER               :: Num_inject, Num_Plume2d, Num_Plume1d, Num_dissolve     
+  INTEGER               :: tt 
+  INTEGER               :: N_total, N_stop_inject
+  INTEGER               :: Stop_inject ! 1: stop injecting; 0: keep injecting
+  INTEGER               :: nspec
 
-  integer, parameter    :: n_x_max = 207 ! 243  !number of x grids in 2D, should be (9 x odd)
-  integer, parameter    :: n_y_max = 81  ! 117  !number of y grids in 2D, should be (9 x odd)
+  REAL(fp)              :: DX, DY
+  REAL(fp) 		          :: mass_eu, mass_la, mass_la2
+  REAL(fp)              :: Length_lat
+  REAL(fp), POINTER     :: X_mid(:), Y_mid(:), P_mid(:)
+  REAL(fp), POINTER     :: P_edge(:)
 
-  ! the odd number of n_x_max can ensure a center grid
-  integer, parameter    :: n_x_mid = (n_x_max+1)/2 !242
-  integer, parameter    :: n_y_mid = (n_y_max+1)/2  !83
-
-  integer, parameter    :: n_x_max2 = n_x_max+2
-  integer, parameter    :: n_y_max2 = n_y_max+2
-
-  integer, parameter    :: n_x_mid2 = (n_x_max2+1)/2 !242
-  integer, parameter    :: n_y_mid2 = (n_y_max2+1)/2  !83
-
-  ! n_slab_max should be divided by 4, to ensure n_slab_25 is an integer.
-  integer, parameter    :: n_slab_max = (INT(n_y_max/4)+1)*4 ! close to n_y_max, number of slabs in 1D
-  integer, parameter    :: n_slab_max2 = n_slab_max+2
-  ! add 2 more slab grid to containing background concentration
-
-  integer               :: IIPAR, JJPAR, LLPAR
-  
-  
-  integer               :: n_slab_25, n_slab_50, n_slab_75
-  integer               :: id_PASV_LA3, id_PASV_LA2, id_PASV_LA 
-  integer               :: id_PASV_EU2, id_PASV_EU
-
-  real, parameter       :: Dx_init = 100
-  real, parameter       :: Dy_init = 10
-  real, parameter       :: Length_init = 40.0*1000.0 ! [m], 20km
-
-  real, parameter       :: Inject_lon = -141.0e+0_fp
-  real, parameter       :: Inject_hPa = 50.0e+0_fp
-  ! 25.0e+0_fp ! [hPa] at about 25 km
-  ! 50.0e+0_fp       ! [hPa] at about 20 km
 
   ! some parameter for sensitive test
-  integer, parameter    :: N1_split = 5     ! Cross-section splitting
-  integer, parameter    :: N2_split = 5     ! length splitting
-  integer, parameter    :: Split_length = 1 ! how many times of DX
-  real, parameter       :: Dissolve_critiria = 10*0.01
-  real, parameter       :: Volume_percent    = 30*0.01
-  real, parameter       :: Critical_day      = 28.0         ! [day]
+  INTEGER, PARAMETER        :: N1_split = 5     ! Cross-section splitting
+  INTEGER, PARAMETER        :: N2_split = 5     ! length splitting
+  INTEGER, PARAMETER        :: Split_length = 1 ! how many times of DX
+  REAL(fp), PARAMETER       :: Dissolve_critiria = 10*0.01
+  REAL(fp), PARAMETER       :: Volume_percent    = 30*0.01
+  REAL(fp), PARAMETER       :: Critical_day      = 28.0         ! [day]
 
-  real(fp), pointer     :: X_mid(:), Y_mid(:), P_mid(:)
-  real(fp), pointer     :: P_edge(:)
-
-  real(fp)              :: DX, DY
-
-  real(fp) 		:: mass_eu, mass_la, mass_la2
-
-  integer               :: N_parcel   ! 131        
-  integer               :: Num_inject, Num_Plume2d, Num_Plume1d, Num_dissolve     
-  integer               :: tt     
-  ! Aircraft would release 131 aerosol parcels every time step
-
-  ! use for plume injection
-  integer               :: N_total, N_stop_inject
-  real(fp)              :: Length_lat
-
-  integer, parameter    :: n_species = 2
-  integer, parameter    :: i_tracer  = 1
-  integer, parameter    :: i_product = 2
-
-  real(fp), parameter       :: Kchem = 1.0e-20_fp ! chemical reaction rate
-  ! use Kchem = 1.0e-20_fp for >1 year simulation
-
-  integer               :: Stop_inject ! 1: stop injecting; 0: keep injecting
-                           ! used for contiuing injecting scenario
-  
-  INTEGER               :: nspec
+  ! Species ID flags
+  INTEGER :: id_SO2,  id_SO4,  id_OH,   id_O3,   id_NH3,   id_NH4,   id_H2O
+  INTEGER :: id_NK01, id_SF01, id_AW01, id_H2SO4
 
   TYPE(Plume2d_list), POINTER :: Plume2d_tail, Plume2d_head
   TYPE(Plume1d_list), POINTER :: Plume1d_tail, Plume1d_head
 
-
+  !-------------------------------------------------------------
+  ! Some parameters to be retired 
+  integer               :: id_PASV_LA3, id_PASV_LA2, id_PASV_LA 
+  integer               :: id_PASV_EU2, id_PASV_EU
+  integer, parameter    :: i_tracer  = 1
+  integer, parameter    :: i_product = 2
+  real(fp), parameter       :: Kchem = 1.0e-20_fp ! chemical reaction rate
+  ! use Kchem = 1.0e-20_fp for >1 year simulation
+  !-------------------------------------------------------------
 CONTAINS
-
 
 !-----------------------------------------------------------------
 
@@ -212,58 +184,131 @@ CONTAINS
 
     USE Plume_list
 
-    USE Input_Opt_Mod, ONLY : OptInput
-    USE State_Met_Mod, ONLY : MetState
-    USE State_Chm_Mod, ONLY : ChmState
-
-!    USE GC_GRID_MOD,   ONLY : XMID, YMID
-!    USE GC_GRID_MOD,   ONLY : GET_AREA_M2 ! new
-
+    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE State_Met_Mod,   ONLY : MetState
+    USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Grid_Mod,  ONLY : GrdState
-
+    USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
+    USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
 
-    USE TIME_MOD,      ONLY : GET_YEAR
-    USE TIME_MOD,      ONLY : GET_MONTH
-    USE TIME_MOD,      ONLY : GET_DAY
-    USE TIME_MOD,      ONLY : GET_HOUR
-    USE TIME_MOD,      ONLY : GET_MINUTE
-    USE TIME_MOD,      ONLY : GET_SECOND
-
-
-
-    LOGICAL,        INTENT(IN)    :: am_I_Root   ! Are we on the root CPU
-    TYPE(MetState), intent(in)    :: State_Met
-    TYPE(ChmState), intent(inout) :: State_Chm
-    TYPE(OptInput), intent(in)    :: Input_Opt
-    TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
-    INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
+    LOGICAL,        INTENT(IN)            :: am_I_Root   ! Are we on the root CPU
+    TYPE(MetState), intent(in)            :: State_Met
+    TYPE(ChmState), intent(inout)         :: State_Chm
+    TYPE(OptInput), intent(in)            :: Input_Opt
+    TYPE(GrdState), INTENT(IN)            :: State_Grid  ! Grid State objectgg
+    INTEGER,        INTENT(OUT)           :: RC         ! Success or failure
+    ! Pointers
+    TYPE(SpcConc), POINTER                :: Spc(:)
+    !TYPE(PlumeSource_t), ALLOCATABLE      :: Plume_sources(:)
 
     INTEGER                       :: i_box, i_slab
     INTEGER                       :: ii, jj, kk
+    INTEGER                       :: id_tracer, N
+    INTEGER                       :: i_lon, i_lat, i_lev            !1:IIPAR
+    CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: FILENAME, FileEntropy, File996
     CHARACTER(LEN=255)            :: FILENAME2, FILENAME3
+    CHARACTER(LEN=255)            :: ErrMsg, ThisLoc, LOC
+    
+    REAL(fp)                      :: lon1, lat1, lon2, lat2
+    REAL(fp)                      :: box_lon_edge, box_lat_edge
+    REAL(fp)                      :: curr_lon, curr_lat, curr_lev
+    REAL(fp), POINTER             :: X_edge(:), Y_edge(:)
+    REAL(fp)                      :: X_edge2, Y_edge2        
+    !REAL(fp), dimension(:,:,:), allocatable :: box_concnt_2D
+    !REAL(fp), dimension(:,:), allocatable   :: box_concnt_1D
 
-    integer :: i_lon, i_lat, i_lev            !1:IIPAR
+    !TYPE(Plume2d_list), POINTER :: Plume2d_new, PLume2d, Plume2d_prev
+    !TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d, Plume1d_prev
+    REAL(fp)                      :: Dt
 
+    RC                 =   GC_SUCCESS
+    ErrMsg             =   ''
+    ThisLoc            =   ' -> at Lagrangian Init (in module GeosCore/lagrange_mod.F90)'
 
-    REAL(fp) :: lon1, lat1, lon2, lat2
-    REAL(fp) :: box_lon_edge, box_lat_edge        
+    n_species          =              State_Chm%nSpecies
+    ! Point to chemical species array. 
+    ! The unit has been convereted to molec/cm3 before the function and will be convereted back to v/v dry air after the function finish
+    Spc                =>             State_Chm%Species
+                     
+    ! Copy all neccessary variable from geoschem.yml here
+    use_lagrange        =             Input_Opt%LagrangianModel_Activate
+    plume_inject_on     =             Input_Opt%PlumeInjection_Activate
+    plume_diag          =             Input_Opt%PlumeInjection_Diag
+    TROPP_sink          =             Input_Opt%TropSink_Activate
+    Num_of_sources      =             Input_Opt%Plume_sources_num
+    Length_init         =             Input_Opt%Initial_length*1000.0   ! km to m
+    
+    IF (Num_of_sources > 0) THEN
+      ALLOCATE( Plume_sources(Num_of_sources), STAT=RC )
+      IF (RC /= 0) THEN
+          errMsg = 'Error allocating Plume_sources'
+          CALL GC_Error( errMsg, RC, thisLoc )
+          RETURN
+       END IF
+       DO N = 1, Num_of_sources
+          Plume_sources(N)%lat1        =  Input_Opt%Plume_sources(N)%lat1
+          Plume_sources(N)%lat2        =  Input_Opt%Plume_sources(N)%lat2
+          Plume_sources(N)%lon         =  Input_Opt%Plume_sources(N)%lon
+          Plume_sources(N)%lev         =  Input_Opt%Plume_sources(N)%lev
+          Plume_sources(N)%rate        =  Input_Opt%Plume_sources(N)%rate
+          Plume_sources(N)%species     =  Input_Opt%Plume_sources(N)%species
+       ENDDO
+    ENDIF
 
-    real(fp), dimension(:,:,:), allocatable :: box_concnt_2D
-    real(fp), dimension(:,:), allocatable   :: box_concnt_1D
+    n_x_max                    =      Input_Opt%PlumeGrid2d_nx ! odd number to make sure n_x_mid to be integer
+    n_y_max                    =      Input_Opt%PlumeGrid2d_ny ! odd number to make sure n_y_mid to be integer
+    Dx_init                    =      Input_Opt%PlumeGrid2d_dx
+    Dy_init                    =      Input_Opt%PlumeGrid2d_dy
+    ! the odd number of n_x_max can ensure a center grid
+    n_x_mid                    =      (n_x_max+1)/2 
+    n_y_mid                    =      (n_y_max+1)/2  
+    n_x_max2                   =      n_x_max+2
+    n_y_max2                   =      n_y_max+2
+    n_x_mid2                   =      (n_x_max2+1)/2 
+    n_y_mid2                   =      (n_y_max2+1)/2  
+    ! n_slab_max should be divided by 4, to ensure n_slab_25 is an integer.
+    n_slab_max                 =      (INT(n_y_max/4)+1)*4 ! close to n_y_max, number of slabs in 1D
+    n_slab_max2                =      n_slab_max+2
+  ! add 2 more slab grid to containing background concentration
 
-    TYPE(Plume2d_list), POINTER :: Plume2d_new, PLume2d, Plume2d_prev
-    TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d, Plume1d_prev
-
-    REAL(fp) :: Dt
+    ! Debug output, to make sure input is properly read
+    ! WRITE( 6, 90  ) 'debug: PLUME MODEL SETTINGS, READ from geoschem_config.yml'
+    ! WRITE( 6, 95  ) 'debug: ----------------'
+    !WRITE( 6, 100 ) 'debug: Turn on plume injection? : ',                        &
+    !                plume_inject_on
+    !WRITE( 6, 100 ) 'debug: Turn on plume injection diagnostic? : ',             &
+    !                plume_diag
+    !WRITE( 6, 110 ) 'Plume injection diagnostic path?    : ',             &
+    !                TRIM( Input_Opt%Plume_sources_diag_dir  )
+    !WRITE( 6, 100 ) 'debug: Turn on lagrangian model? : ',                       &
+    !                use_lagrange
+    !WRITE( 6, 100 ) 'debug: Turn on tropospheric sink? : ',                      &
+    !                TROPP_sink
+    !WRITE(6,*) 'debug: Plume segmentation 2D grid:',                             &
+    !    ' nx=', n_x_max,                                 &
+    !    ' ny=', n_y_max,                                 &
+    !    ' dx=', Dx_init,                                 &
+    !    ' dy=', Dy_init
+    !WRITE( 6, 105 ) 'debug: Number of sources    : ', Num_of_sources
+    ! print information of each sources one by one
+    !WRITE( 6, 95  ) 'debug: ------------------------------------------------'
+    !WRITE(6, 120) 'debug: No.', 'lat1', 'lat2', 'lon', 'lev', 'rate', 'species'
+    !DO N = 1, Num_of_sources
+    !  WRITE(6,121) N,                                                    &
+    !  Plume_sources(N)%lat1,                                   &
+    !  Plume_sources(N)%lat2,                                   &
+    !  Plume_sources(N)%lon,                                    &
+    !  Plume_sources(N)%lev,                                    &
+    !  Plume_sources(N)%rate,                                   &
+    !  TRIM(Plume_sources(N)%species)
+    !END DO
+    !WRITE( 6, 95  ) '------------------------------------------------'
+   
 	
-	
-
     Dt = GET_TS_DYN()
     N_parcel = NINT(132 *1000/Length_init /600*Dt)
-
-
     ! use for plume injection
     N_total    = 60 * 1.0e+5 / Length_init
     Length_lat = Length_init / 1.0e+5
@@ -271,9 +316,7 @@ CONTAINS
     ! define how many plume segments will be injected
     ! -1 means keep inecting in the whole simulation
     N_stop_inject = -1 ! N_total ! -1
-
     Stop_inject = 0
-
 
     ! Check 2D domain grid
     IF(MOD(n_x_max,9).ne.0) WRITE(6,*)"*** ERROR,  n_x_max should be divisible by 9 ***,"
@@ -283,208 +326,212 @@ CONTAINS
     IIPAR = State_Grid%NX
     JJPAR = State_Grid%NY
     LLPAR = State_Grid%NZ
-
     DX = State_Grid%DX
     DY = State_Grid%DY
-
-
+    X_edge => State_Grid%XEdge(:,1) 
+    Y_edge => State_Grid%YEdge(1,:)
+    P_edge => State_Met%PEDGE(1,1,:) 
+    X_edge2       = X_edge(2)
+    Y_edge2       = Y_edge(2) 
+!----------Output Files need to be organized--------------
     FILENAME2   = 'Plume_lifetime_seconds.txt'
-
     OPEN( 484,      FILE=TRIM( FILENAME2   ), STATUS='REPLACE',  &
           FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-
     CLOSE(484)
 
-
-
     FILENAME3 = 'Plume_number.txt'
-
     OPEN( 261,      FILE=TRIM( FILENAME3   ), STATUS='REPLACE',  &
           FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-
     CLOSE(261)
 
-
-
     FileEntropy   = 'Plume_entropy.txt'
-
     OPEN( 487,      FILE=TRIM( FileEntropy   ), STATUS='REPLACE',  &
           FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-
     CLOSE(487)
 
-
-
-
     File996   = 'Plume_entropy_check.txt'
-
     OPEN( 996,      FILE=TRIM( File996  ), STATUS='REPLACE',  &
           FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-
     CLOSE(996)
+!----------Output Files need to be organized--------------
+
+    !allocate(box_concnt_2D(n_x_max, n_y_max, n_species))
+    !allocate(box_concnt_1D(n_slab_max,n_species))
 
 
+    !WRITE(6,'(a)') '--------------------------------------------------------'
+    !WRITE(6,'(a)') '--------------------------------------------------------'
+    !WRITE(6,'(a)') ' Initial Lagrnage Module (Using Dynamic time step)'
+    !WRITE(6,'(a)') '--------------------------------------------------------'
+    !WRITE(6,*) 'time step=', Dt
+    !WRITE(6,*) 'Injected plume every time step: ', N_parcel
+    !WRITE(6,'(a)') '--------------------------------------------------------'
+    !WRITE(6,'(a)') '--------------------------------------------------------'
 
-
-    allocate(box_concnt_2D(n_x_max, n_y_max, n_species))
-    allocate(box_concnt_1D(n_slab_max,n_species))
-
-
-    WRITE(6,'(a)') '--------------------------------------------------------'
-    WRITE(6,'(a)') '--------------------------------------------------------'
-    WRITE(6,'(a)') ' Initial Lagrnage Module (Using Dynamic time step)'
-    WRITE(6,'(a)') '--------------------------------------------------------'
-    WRITE(6,*) 'time step=', Dt
-    WRITE(6,*) 'Injected plume every time step: ', N_parcel
-    WRITE(6,'(a)') '--------------------------------------------------------'
-    WRITE(6,'(a)') '--------------------------------------------------------'
-
-
+    ! Note (BZ): As a start, assume single location, but allows multiple types of species
     ! -----------------------------------------------------------
     ! create first node (head) for 2d linked list:
     ! 
     ! At the beginning, there are only one node in the 2d list, 
     ! so Plume2d_tail and Plume2d_head refer to the same node
     ! -----------------------------------------------------------
+
+    IF (.not.plume_inject_on) THEN
+      WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration'
+      RETURN
+    ENDIF
+    IF (plume_inject_on .AND. num_of_sources.lt.1) THEN
+      ErrMsg = 'Injection is turned on but no source specified'
+      CALL GC_Error( ErrMsg, RC, ThisLoc )
+      RETURN
+    ENDIF
+    curr_lon    =  Plume_sources(1)%lon
+    curr_lat    =  Plume_sources(1)%lat1
+    curr_lev    =  Plume_sources(1)%lev
+    i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
+    if(i_lon>IIPAR) i_lon=i_lon-IIPAR
+    if(i_lon<1) i_lon=i_lon+IIPAR
+    !WRITE(6,*) 'debug: ilon=', i_lon
+    i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
+    if(i_lat>JJPAR) i_lat=JJPAR
+    if(i_lat<1) i_lat=1
+    !WRITE(6,*) 'debug: ilat=', i_lat
+    i_lev = Find_iPLev(curr_lev,P_edge)
+    !WRITE(6,*) 'debug: curr_lev=', curr_lev
+    !WRITE(6,*) 'debug: P_edge(1)=', curr_lev
+    !WRITE(6,*) 'debug: ilev1=', i_lev
+    if(i_lev>LLPAR) i_lev=LLPAR
+    !WRITE(6,*) 'debug: ilev2=', i_lev
+
+    ! Check that species units are in [kg]
+    id_SO2= Ind_('SO2')
+    id_SO4= Ind_('SO4')
+    WRITE(6,'(a)') 'Unit for SO2 is: ' // TRIM(UNIT_STR(Spc(id_SO2)%Units))
+    WRITE(6,'(a)') 'Unit for SO4 is: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
+    ! Initial Unit for all species is: molec/cm3
+    IF ( Spc(1)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
+      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(1)%Units))
+      CALL GC_Error( ErrMsg, RC, ThisLoc )
+    ENDIF
+
     ALLOCATE(Plume2d_tail)
     Plume2d_tail%IsNew = 1
     Plume2d_tail%label = 1
 
-    Plume2d_tail%LON = Inject_lon
-    Plume2d_tail%LAT = -29.95e+0_fp
-    Plume2d_tail%LEV = Inject_hPa
+    !Plume2d_tail%LON = Inject_lon
+    !Plume2d_tail%LAT = -29.95e+0_fp
+    !Plume2d_tail%LEV = Inject_hPa
+    Plume2d_tail%LON   = Plume_sources(1)%lon
+    Plume2d_tail%LAT   = Plume_sources(1)%lat1
+    Plume2d_tail%LEV   = Plume_sources(1)%lev
 
-    Plume2d_tail%LENGTH = Length_init ! 1000m 
     Plume2d_tail%ALPHA  = 0.0e+0_fp
-
     Plume2d_tail%LIFE = 0.0e+0_fp
 
+    Plume2d_tail%LENGTH = Length_init ! m 
     Plume2d_tail%PDX = Dx_init
     Plume2d_tail%PDY = Dy_init
-
-    ! Here assume the injection rate is 30 kg/km (=30 g/m) for H2SO4
-    ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species))
-    Plume2d_tail%CONCNT2d = 0.0e+0_fp ! The unit looks like (g/m3) -> molec/cm3
-    Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = Plume2d_tail%LENGTH*30.0 &
-                  /(Plume2d_tail%PDX*Plume2d_tail%PDY*Plume2d_tail%LENGTH)
-
-    ! From [g/m3] to [molec/cm3], 98.0 g/mol for H2SO4
-    Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = &
-                              Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,i_tracer) &
-                                                      / 1.0e+6_fp / 98.0 * AVO
-
-
-    mass_la  = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,i_tracer)* &
-             (Plume2d_tail%PDX*Plume2d_tail%PDY*Plume2d_tail%LENGTH*1.0e+6_fp)
-    mass_la2 = 0.0
-    mass_eu  = 0.0
-
-    NULLIFY(Plume2d_tail%next)
-    Plume2d_head => Plume2d_tail
-
-
-
-    Num_Plume2d = 1
-
-    ! Check Num_Plume1d to determine the first 1d (changed from from 2d), and
-    ! create the first node for 1d
-    Num_Plume1d = 0
-
-    ! use this value to set the initial latutude for injected plume
-    Num_inject = 1
-
-    Num_dissolve = 0
-
-
-
-    n_slab_25 = (n_slab_max-2)/4*1
-    n_slab_50 = (n_slab_max-2)/4*2
-    n_slab_75 = (n_slab_max-2)/4*3
-
-
-    X_mid  => State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! IIPAR ! new
-    Y_mid  => State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
-    P_mid  => State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)
-
-    P_edge => State_Met%PEDGE(1,1,:)  ! Wet air press @ level edges [hPa]
-
-
-    tt   = 0
-
-
-
-    IF(use_lagrange==0)THEN
-    ! instantly dissolve injected plume into Eulerian grid 
-
-      WRITE(6,'(a)') ' '
-      WRITE(6,'(a)') '********************************************************'
-      WRITE(6,'(a)') ' You are not using lagrange_mod now'
-      WRITE(6,'(a)') ' set variable use_lagrange = 1 to turn on lagrnage_mod  '
-      WRITE(6,'(a)') ' '
-      WRITE(6,'(a)') ' WARNING: all the initial concentration is set as 0 now'
-      WRITE(6,'(a)') '********************************************************'
-      WRITE(6,'(a)') ' '
-	  ! debug purpose, BZ, does species database and SpecData contains the same species and order?
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU  = ', id_PASV_EU, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU)%Info%Name)
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2  = ', id_PASV_EU2, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
-      id_PASV_EU  = State_Chm%nAdvect-1
-      id_PASV_EU2 = State_Chm%nAdvect
+    
+    ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species+num_of_sources)) ! add additional species here to track species that are newly added
+    Plume2d_tail%CONCNT2d = 0.0e+0_fp ! The final unit looks like (g/m3)
+    
+    ! pass all species as from background as initial concentration, the original unit seems like v/v dry
+    DO N = 1, n_species
+      Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
+    ENDDO
+    IF (use_lagrange) THEN
+      
+      !WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2  = ', id_PASV_EU2, &
+      !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
+      !id_PASV_EU  = State_Chm%nAdvect-1
+      !id_PASV_EU2 = State_Chm%nAdvect
 
       ! set initial background concentration of injected aerosol as 0 in GCM
       ! output the apecies' name for double check ???
-      State_Chm%Species(id_PASV_EU2)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
-      State_Chm%Species(id_PASV_EU)%Conc(:,:,:)  = 0.0e+0_fp  ! [kg/kg]
-	  ! debug purpose, BZ, does species database and SpecData contains the same species and orders?
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU  = ', id_PASV_EU, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU)%Info%Name)
-			
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2 = ', id_PASV_EU2, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
+      !State_Chm%Species(id_PASV_EU2)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
+      !State_Chm%Species(id_PASV_EU)%Conc(:,:,:)  = 0.0e+0_fp  ! [kg/kg]
+      ! debug purpose, BZ, does species database and SpecData contains the same species and orders?
+      ! WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU  = ', id_PASV_EU, &
+      !         '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU)%Info%Name)
+        
+      !WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2 = ', id_PASV_EU2, &
+      !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
 
+      ! injection is on, source larger than 0, add background to the plume grid
+      ! Add ijected species
+    
+
+      ! add injected species to the center of plume grid
+      DO N = 1, num_of_sources
+        spc_name = Plume_sources(N)%species
+        id_tracer   = Ind_(spc_name)
+        Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
+                    + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
+                    
+         Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N)  &
+                    + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
+      ENDDO
+      NULLIFY(Plume2d_tail%next)
+      Plume2d_head => Plume2d_tail
     ELSE
+      ! add injected species into eulerian grid
+      WRITE(6,'(a)') ' lagrange module was turned off, add injected species to eulerian grid'
+      DO N = 1, num_of_sources
+        spc_name = Plume_sources(N)%species
+        id_tracer   = Ind_(spc_name)
+        Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
+                + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(DX * DY * State_Met%BXHEIGHT(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
+      ENDDO
+    ENDIF
+    !  WRITE(6,'(a)') ' '
+    !  WRITE(6,'(a)') '********************************************************'
+    !  WRITE(6,'(a)') ' You are using lagrange_mod now'
+    !  WRITE(6,'(a)') ' set variable use_lagrange = 0 to turn off lagrnage_mod '
+    !  WRITE(6,'(a)') ' '
+    !  WRITE(6,'(a)') ' WARNING: all the initial concentration is set as 0 now'
+    !  WRITE(6,'(a)') '********************************************************'
+    !  WRITE(6,'(a)') ' '
 
-      WRITE(6,'(a)') ' '
-      WRITE(6,'(a)') '********************************************************'
-      WRITE(6,'(a)') ' You are using lagrange_mod now'
-      WRITE(6,'(a)') ' set variable use_lagrange = 0 to turn off lagrnage_mod '
-      WRITE(6,'(a)') ' '
-      WRITE(6,'(a)') ' WARNING: all the initial concentration is set as 0 now'
-      WRITE(6,'(a)') '********************************************************'
-      WRITE(6,'(a)') ' '
+    !  id_PASV_LA  = State_Chm%nAdvect-2
+    !  id_PASV_LA2 = State_Chm%nAdvect-1
+    !  id_PASV_LA3 = State_Chm%nAdvect
 
-      id_PASV_LA  = State_Chm%nAdvect-2
-      id_PASV_LA2 = State_Chm%nAdvect-1
-      id_PASV_LA3 = State_Chm%nAdvect
-
-      State_Chm%Species(id_PASV_LA)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
-      State_Chm%Species(id_PASV_LA2)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
-      State_Chm%Species(id_PASV_LA3)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
+    !  State_Chm%Species(id_PASV_LA)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
+    !  State_Chm%Species(id_PASV_LA2)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
+    !  State_Chm%Species(id_PASV_LA3)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
 
 	  ! debug purpose, BZ, does species database and SpecData contains the same species and order?
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA  = ', id_PASV_LA, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA)%Info%Name)
+	  !WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA  = ', id_PASV_LA, &
+    !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA)%Info%Name)
 			
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA2  = ', id_PASV_LA2, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA2)%Info%Name)
+	  !WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA2  = ', id_PASV_LA2, &
+    !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA2)%Info%Name)
 			
-	  WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA3  = ', id_PASV_LA3, &
-            '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA3)%Info%Name)
-    ENDIF
+	  !WRITE(6,*) 'debug, BZ: Tracer id_PASV_LA3  = ', id_PASV_LA3, &
+    !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_LA3)%Info%Name)
+    !ENDIF
 
 
-    deallocate(box_concnt_2D)
-    deallocate(box_concnt_1D)
+    !deallocate(box_concnt_2D)
+    !deallocate(box_concnt_1D)
 
-    nullify(Plume2d_new)
-    nullify(PLume2d)
-    nullify(Plume2d_prev)
-    nullify(Plume1d_new)
-    nullify(Plume1d)
-    nullify(Plume1d_prev)
+    !nullify(Plume2d_new)
+    !nullify(PLume2d)
+    !nullify(Plume2d_prev)
+    !nullify(Plume1d_new)
+    !nullify(Plume1d)
+    !nullify(Plume1d_prev)
 
-
+90  FORMAT( /, A                 )
+95  FORMAT( A                    )
+100 FORMAT( A, L5                )
+105 FORMAT( A, I0                )
+110 FORMAT( A, A                 )
+120 FORMAT(A8,1X,"|", A8,1X,"|",A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
+121 FORMAT(I8,1X,"|",F8.3,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A)
   END SUBROUTINE lagrange_init
 
 !=================================================================
@@ -539,7 +586,7 @@ CONTAINS
 
     ErrMsg = ''
 
-    IF(use_lagrange==0)THEN 
+    IF(.NOT. Input_Opt%LagrangianModel_Activate)THEN 
     ! instantly dissolve injected plume into Eulerian grid 
 
       Dt = GET_TS_DYN()
@@ -561,10 +608,10 @@ CONTAINS
 
       DO i_box = Num_inject+1, Num_inject+N_parcel, 1
 
-        box_lon    = Inject_lon
+        box_lon    = Plume_sources(1)%lon
         box_lat    = ( -30.005e+0_fp + Length_lat * MOD(i_box,N_total) ) &
                      * (-1.0)**FLOOR(1.0*i_box/N_total) ! -29.995S:29.995N:0.01
-        box_lev    = Inject_hPa
+        box_lev    = Plume_sources(1)%lev
 
 
         i_lon = Find_iLonLat(box_lon, DX, X_edge2)
@@ -731,7 +778,7 @@ CONTAINS
     ! use plume model
     !
     !=======================================================================
-    IF(use_lagrange==1)THEN
+    IF(Input_Opt%LagrangianModel_Activate)THEN
 
     ! call the lagrnage_run() and plume_run() to calculate injected plume
 
@@ -909,12 +956,12 @@ CONTAINS
       Plume2d_new%IsNew = 1
       Plume2d_new%label = i_box
 
-      Plume2d_new%LON = Inject_lon
+      Plume2d_new%LON = Plume_sources(1)%lon
       Plume2d_new%LAT = ( -30.005e+0_fp + Length_lat * MOD(i_box,N_total) ) &
                      * (-1.0)**FLOOR(1.0*i_box/N_total) 
 !      Plume2d_new%LAT = ( -30.005e+0_fp + 0.01e+0_fp * MOD(i_box,6000) ) &
 !                     * (-1.0)**FLOOR(i_box/6000.0) ! -29.995S:29.995N:0.01
-      Plume2d_new%LEV = Inject_hPa
+      Plume2d_new%LEV = Plume_sources(1)%lev
 
       Plume2d_new%LENGTH = Length_init ! 1000m 
       Plume2d_new%ALPHA  = 0.0e+0_fp
@@ -3103,10 +3150,10 @@ CONTAINS
            Cslab = box_concnt_1D(:,i_species)
 	
 	   ! bilinear:
-           CALL Slab_init_bilinear(Pdx, Pdy, box_theta, Pc, Yscale, box_Ra, box_Rb, Cslab)
+           CALL Slab_init_bilinear(Pdx, Pdy, box_theta, Pc, Yscale, box_Ra, box_Rb, Cslab, n_slab_max)
 
 	   ! conservative:
-!           CALL Slab_init_conservative(Pdx, Pdy, box_theta, Pc, Yscale, box_Ra, box_Rb, Cslab)
+!           CALL Slab_init_conservative(Pdx, Pdy, box_theta, Pc, Yscale, box_Ra, box_Rb, Cslab, n_slab_max, n_x_max, n_y_max)
 
            box_concnt_1D(:,i_species) = Cslab
 
@@ -4384,7 +4431,7 @@ CONTAINS
 
 
     ! if there is no plume left, stop using Lagrangian plume module
-    IF(Num_Plume1d+Num_Plume2d==0) use_lagrange=88
+    !IF(Num_Plume1d+Num_Plume2d==0) Input_Opt%LagrangianModel_Activate = .False.
 
 
     ! Everything is done, clean up pointers
@@ -4821,7 +4868,7 @@ CONTAINS
 !======================================================================
 
   SUBROUTINE Slab_init_conservative(Pdx, Pdy, theta1, Pc_2D, Height1, &
-						box_Ra, box_Rb, Cslab)
+						box_Ra, box_Rb, Cslab, n_slab_max, n_x_max, n_y_max)
 
     IMPLICIT NONE
 
@@ -4831,18 +4878,20 @@ CONTAINS
     REAL(fp)    :: Pc_2D(n_x_max,n_y_max) !, Ec_2D(n_x_max,n_y_max)
 
 
-    INTEGER, parameter     :: Nb = n_slab_max +2
-    INTEGER, parameter     :: Na = (INT(n_x_max/4)+1)*4 +2
-
+    !INTEGER, parameter     :: Nb = n_slab_max +2
+    !INTEGER, parameter     :: Na = (INT(n_x_max/4)+1)*4 +2
+    INTEGER, INTENT(IN)     :: n_slab_max, n_x_max, n_y_max            
+    INTEGER                 :: Nb, Na  
+    
     INTEGER     :: Nb_mid, Na_mid
 
-    REAL(fp)    :: X2d(Na,Nb), Y2d(Na,Nb), C2d(Na,Nb) !, Extra_C2d(Na,Nb)
+    REAL(fp), ALLOCATABLE    :: X2d(:,:), Y2d(:,:), C2d(:,:) !, Extra_C2d(Na,Nb)
 
     REAL(fp)    :: LenB, LenA
     REAL(fp)    :: Adx, Ady, Bdx, Bdy
     REAL(fp)    :: Prod, M, Lb, La
 
-    REAL(fp)    :: C_slab(Nb) !, Extra_slab(Nb)
+    REAL(fp), ALLOCATABLE    :: C_slab(:) !, Extra_slab(Nb)
 
     REAL(fp)    :: start, finish
 
@@ -4870,7 +4919,12 @@ CONTAINS
 
     LOGICAL	:: Is_inside
 
-
+      Nb = n_slab_max +2
+      Na = (INT(n_x_max/4)+1)*4 +2
+      ALLOCATE(X2d(Na,Nb))
+      ALLOCATE(Y2d(Na,Nb))
+      ALLOCATE(C2d(Na,Nb))
+      ALLOCATE(C_slab(Nb))
       ! define the coordinate system
       DO i=1, n_x_max
         Xx(i) = Pdx*(i-n_x_mid)
@@ -5378,7 +5432,7 @@ CONTAINS
 !======================================================================
 
   SUBROUTINE Slab_init_bilinear(Pdx, Pdy, theta1, Pc_2D, Height1, &
-						box_Ra, box_Rb, Cslab)
+						box_Ra, box_Rb, Cslab, n_slab_max)
  
     IMPLICIT NONE
 
@@ -5386,27 +5440,27 @@ CONTAINS
     REAL(fp), INTENT(INOUT)  :: box_Ra, box_Rb
     REAL(fp), INTENT(INOUT)  :: Cslab(n_slab_max)
     REAL(fp)    :: Pc_2D(n_x_max,n_y_max) !, Ec_2D(n_x_max,n_y_max)
+    INTEGER, INTENT(IN)      :: n_slab_max
 
-
-    INTEGER, parameter     :: Nb = n_slab_max
+    !INTEGER, parameter     :: Nb = n_slab_max
     INTEGER, parameter     :: Na = 128
-
+    !INTEGER                :: Nb  
+    
     INTEGER     :: Nb_mid, Na_mid
 
-    REAL(fp)    :: X2d(Na,Nb), Y2d(Na,Nb), C2d(Na,Nb) !, Extra_C2d(Na,Nb)
+    REAL(fp)    :: X2d(Na,n_slab_max), Y2d(Na,n_slab_max), C2d(Na,n_slab_max) !, Extra_C2d(Na,Nb)
 
     REAL(fp)    :: LenB, LenA
     REAL(fp)    :: Adx, Ady, Bdx, Bdy
     REAL(fp)    :: Prod, M, Lb, La
 
-    REAL(fp)    :: C_slab(Nb) !, Extra_slab(Nb)
+    REAL(fp)    :: C_slab(n_slab_max) !, Extra_slab(Nb)
 
     real(fp)  :: start, finish
 
     INTEGER     :: i, j
 
-
-      Nb_mid = INT(Nb/2)
+      Nb_mid = INT(n_slab_max/2)
       Na_mid = INT(Na/2)
 
 
@@ -5433,7 +5487,7 @@ CONTAINS
       X2d(:,Nb_mid) = X2d(:,Nb_mid) + 0.5*Bdx
       Y2d(:,Nb_mid) = Y2d(:,Nb_mid) - 0.5*Bdy
 
-      DO j=Nb_mid+1, Nb, 1
+      DO j=Nb_mid+1, n_slab_max, 1
         X2d(:,j) = X2d(:,j-1) - Bdx
         Y2d(:,j) = Y2d(:,j-1) + Bdy
       ENDDO
@@ -5451,7 +5505,7 @@ CONTAINS
       !$OMP DEFAULT( SHARED     ) &
       !$OMP PRIVATE( i, j )
       DO i=1,Na,1
-      DO j=1,Nb,1
+      DO j=1,n_slab_max,1
         C2d(i,j)       = Interplt_2D(Pdx, Pdy, X2d(i,j), Y2d(i,j), Pc_2D, 2)
       ENDDO
       ENDDO
@@ -5462,7 +5516,7 @@ CONTAINS
         Lb = LenB
         La = Height1 *TAN(theta1)
 
-        DO i=1,Nb,1
+        DO i=1,n_slab_max,1
           C_slab(i)     = SUM(C2d(:,i)) *(LenA*LenB)/ (La*Lb)
         ENDDO
 

@@ -285,6 +285,7 @@ MODULE Input_Opt_Mod
      INTEGER                     :: PlumeGrid2d_ny
      REAL(fp)                    :: PlumeGrid2d_dx
      REAL(fp)                    :: PlumeGrid2d_dy
+     REAL(fp)                    :: Initial_length
      !----------------------------------------
      ! GAMAP MENU fields
      !----------------------------------------
@@ -820,7 +821,7 @@ CONTAINS
     Input_Opt%Plume_sources_diag_dir   = ''
     Input_Opt%PlumeGrid2d_dx           = 0.0_fp
     Input_Opt%PlumeGrid2d_dy           = 0.0_fp
-    
+    Input_Opt%Initial_length           = 0.0_fp
     !----------------------------------------
     ! OUTPUT MENU fields
     !----------------------------------------

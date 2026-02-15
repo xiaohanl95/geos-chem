@@ -212,6 +212,7 @@ PROGRAM GEOS_Chem
   INTEGER                  :: ELAPSED_TODAY, HOUR,        MINUTE,  SECOND
   INTEGER                  :: id_H2O,        id_CH4,      id_CLOCK
   INTEGER                  :: previous_units
+  INTEGER                  :: id_SO2,  id_SO4  ! debug, used to check unit, BZ
 
   ! Reals
   REAL(f8)                 :: TAU,           TAUb
@@ -290,7 +291,8 @@ PROGRAM GEOS_Chem
 
   ! Display model information
   CALL Display_Model_Info()
-
+  id_SO2 = 1
+  id_SO4 = 20  
   !==========================================================================
   !                ***** I N I T I A L I Z A T I O N *****
   !==========================================================================
@@ -796,12 +798,30 @@ PROGRAM GEOS_Chem
   ! NSTEP is the number of dynamic timesteps w/in the outer loop
   ! Timesteps are now retrieved in seconds (ewl, 2/6/2018)
   N_DYN_STEPS = 10800 / GET_TS_DYN()     ! 3hr interval
-  
+
+  !WRITE(6,'(a)') 'After initialization: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+  !WRITE(6,'(a)') 'After initialization: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
   !===============================================
   ! Lagrange Module
   !===============================================
+  ! unit is mol/mol dry
+  CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = MOLECULES_SPECIES_PER_CM3,                   &
+               previous_units = previous_units,                              &
+               RC             = RC                                          )
   CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
   
+  CALL Convert_Spc_Units(                                            &
+               Input_Opt  = Input_Opt,                                       &
+               State_Chm  = State_Chm,                                       &
+               State_Grid = State_Grid,                                      &
+               State_Met  = State_Met,                                       &
+               new_units  = previous_units,                                  &
+               RC         = RC                                              )
   ! Start a new outer loop
   DO
 
@@ -919,9 +939,25 @@ PROGRAM GEOS_Chem
        !===============================================
        ! Lagrange Module
        !===============================================
-
+       ! In theory the unit should be kg/kg
+       !WRITE(6,'(a)') 'Before plume_inject: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'Before plume_inject: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+       CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = MOLECULES_SPECIES_PER_CM3,                   &
+               previous_units = previous_units,                              &
+               RC             = RC                                          )
        CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-	   
+	    CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = previous_units,                   &
+               RC             = RC                                          )
        !=====================================================================
        !       ***** R U N   H E M C O   P H A S E   1 *****
        !
@@ -941,7 +977,8 @@ PROGRAM GEOS_Chem
        ! Run HEMCO Phase 1
        CALL Emissions_Run( Input_Opt, State_Chm,   State_Diag, State_Grid, &
                            State_Met, TimeForEmis, 1,          RC )
-
+       !WRITE(6,'(a)') 'After emission phase 1: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'After emission phase 1: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
        ! Trap potential errors
        IF ( RC /= GC_SUCCESS ) THEN
           ErrMsg = 'Error encountered in "Emissions_Run"!'
@@ -1233,7 +1270,8 @@ PROGRAM GEOS_Chem
           ENDIF
 
        ENDIF
-
+       !WRITE(6,'(a)') 'After transport: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'After transport: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
        ! Update clock tracer (skip if running in dry-run mode)
        IF ( notDryRun .and. id_CLOCK > 0 ) THEN
           CALL Set_Clock_Tracer( State_Chm, State_Grid )
@@ -1368,7 +1406,8 @@ PROGRAM GEOS_Chem
              CALL Timer_End( "HEMCO", RC )
           ENDIF
        ENDIF
-
+       !WRITE(6,'(a)') 'After emissioin phase 2: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'After emissioin phase 2: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
        ! Also prescribe methane surface concentrations throughout PBL
        ! (currently done outside emissions)
        IF ( Input_Opt%ITS_A_FULLCHEM_SIM   .and.                             &
@@ -1499,7 +1538,8 @@ PROGRAM GEOS_Chem
           ENDIF
 
        ENDIF
-
+       !WRITE(6,'(a)') 'After convection: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'After convection: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
        !=====================================================================
        !                  ***** C H E M I S T R Y *****
        !=====================================================================
@@ -1535,11 +1575,14 @@ PROGRAM GEOS_Chem
                    CALL Error_Stop( ErrMsg, ThisLoc )
                 ENDIF
              ENDIF
-
+             
              ! Do GEOS-Chem chemistry
+             WRITE(6,'(a)') 'before do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+             WRITE(6,'(a)') 'before do chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
              CALL Do_Chemistry( Input_Opt,  State_Chm, State_Diag, &
                                 State_Grid, State_Met, RC )
-
+             WRITE(6,'(a)') 'after do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+             WRITE(6,'(a)') 'after do chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
              ! Trap potential errors
              IF ( RC /= GC_SUCCESS ) THEN
                 ErrMsg = 'Error encountered in "Do_Chemistry"!'

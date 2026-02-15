@@ -3991,6 +3991,18 @@ CONTAINS
     ENDIF
     Input_Opt%TropSink_Activate = v_bool
     !------------------------------------------------------------------------
+    ! Get initial length of injected plume
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%Plume_injection%initial_length"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Initial_length = v_real
+    !------------------------------------------------------------------------
     ! Get number of x grid in 2d plume segment
     !------------------------------------------------------------------------
     key   = "Plume_sources%lagrangian_model%nx_2d"
