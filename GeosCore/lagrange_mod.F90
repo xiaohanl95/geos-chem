@@ -47,8 +47,14 @@
 ! at a start, I assume all injection occur at the same location, only species are different, so I don't handle plume seg interaction
 ! Plume location will only initilize based on the first source location
 !
+! The desired structure
+! for every injection
+!   CALL lagrange_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+!   CALL plume_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+!   CALL lagrange_write_std( am_I_Root, RC )
+!But the current structure, lagrange_run contains loop for every injection
+!
 ! Known issue: in order to call do_chemistry module, I stored concentration of all chemical species in plume seg, which might require extremely large memory
-
 
 
 
@@ -126,8 +132,9 @@ MODULE Lagrange_Mod
   TYPE(PlumeSource_t), ALLOCATABLE      :: Plume_sources(:)
   REAL(fp)                              :: Dx_init
   REAL(fp)                              :: Dy_init
-  REAL(fp)                              :: Length_init   ! m
-
+  REAL(fp)                              :: Length_init    ! m
+  REAL(fp)                              :: Aircraft_speed ! m/s
+  REAL(fp)                              :: plume_interval ! degree
 
   ! Other variables
   INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
@@ -150,7 +157,8 @@ MODULE Lagrange_Mod
   REAL(fp)              :: Length_lat
   REAL(fp), POINTER     :: X_mid(:), Y_mid(:), P_mid(:)
   REAL(fp), POINTER     :: P_edge(:)
-
+  REAL(fp), POINTER     :: X_edge(:), Y_edge(:)
+  REAL(fp)              :: X_edge2, Y_edge2
 
   ! some parameter for sensitive test
   INTEGER, PARAMETER        :: N1_split = 5     ! Cross-section splitting
@@ -214,8 +222,7 @@ CONTAINS
     REAL(fp)                      :: lon1, lat1, lon2, lat2
     REAL(fp)                      :: box_lon_edge, box_lat_edge
     REAL(fp)                      :: curr_lon, curr_lat, curr_lev
-    REAL(fp), POINTER             :: X_edge(:), Y_edge(:)
-    REAL(fp)                      :: X_edge2, Y_edge2        
+            
     !REAL(fp), dimension(:,:,:), allocatable :: box_concnt_2D
     !REAL(fp), dimension(:,:), allocatable   :: box_concnt_1D
 
@@ -226,6 +233,11 @@ CONTAINS
     RC                 =   GC_SUCCESS
     ErrMsg             =   ''
     ThisLoc            =   ' -> at Lagrangian Init (in module GeosCore/lagrange_mod.F90)'
+
+    Num_inject         =    0
+    Num_Plume2d        =    0
+    Num_Plume1d        =    0
+    Num_dissolve       =    0
 
     n_species          =              State_Chm%nSpecies
     ! Point to chemical species array. 
@@ -239,7 +251,9 @@ CONTAINS
     TROPP_sink          =             Input_Opt%TropSink_Activate
     Num_of_sources      =             Input_Opt%Plume_sources_num
     Length_init         =             Input_Opt%Initial_length*1000.0   ! km to m
-    
+    Aircraft_speed      =             Input_Opt%Aircraft_speed  !m/s
+    plume_interval      =             Input_Opt%plume_interval ! degree
+
     IF (Num_of_sources > 0) THEN
       ALLOCATE( Plume_sources(Num_of_sources), STAT=RC )
       IF (RC /= 0) THEN
@@ -308,7 +322,9 @@ CONTAINS
    
 	
     Dt = GET_TS_DYN()
-    N_parcel = NINT(132 *1000/Length_init /600*Dt)
+    ! N_parcel = NINT(132 *1000/Length_init /600*Dt)
+    N_parcel = NINT(Aircraft_speed * Dt / Length_init)
+    IF (N_parcel<1) N_parcel=1
     ! use for plume injection
     N_total    = 60 * 1.0e+5 / Length_init
     Length_lat = Length_init / 1.0e+5
@@ -377,11 +393,11 @@ CONTAINS
     ! -----------------------------------------------------------
 
     IF (.not.plume_inject_on) THEN
-      WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration'
+      WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip initialization'
       RETURN
     ENDIF
     IF (plume_inject_on .AND. num_of_sources.lt.1) THEN
-      ErrMsg = 'Injection is turned on but no source specified'
+      ErrMsg = 'Plume injection is turned on but no source specified'
       CALL GC_Error( ErrMsg, RC, ThisLoc )
       RETURN
     ENDIF
@@ -406,46 +422,21 @@ CONTAINS
     ! Check that species units are in [kg]
     id_SO2= Ind_('SO2')
     id_SO4= Ind_('SO4')
-    WRITE(6,'(a)') 'Unit for SO2 is: ' // TRIM(UNIT_STR(Spc(id_SO2)%Units))
-    WRITE(6,'(a)') 'Unit for SO4 is: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
+    WRITE(6,'(a)') 'debug: Unit for SO2 is: ' // TRIM(UNIT_STR(Spc(id_SO2)%Units))
+    WRITE(6,'(a)') 'debug: Unit for SO4 is: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
     ! Initial Unit for all species is: molec/cm3
-    IF ( Spc(1)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
-      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(1)%Units))
+    IF ( Spc(id_SO2)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
+      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO2)%Units))
       CALL GC_Error( ErrMsg, RC, ThisLoc )
     ENDIF
 
-    ALLOCATE(Plume2d_tail)
-    Plume2d_tail%IsNew = 1
-    Plume2d_tail%label = 1
 
-    !Plume2d_tail%LON = Inject_lon
-    !Plume2d_tail%LAT = -29.95e+0_fp
-    !Plume2d_tail%LEV = Inject_hPa
-    Plume2d_tail%LON   = Plume_sources(1)%lon
-    Plume2d_tail%LAT   = Plume_sources(1)%lat1
-    Plume2d_tail%LEV   = Plume_sources(1)%lev
-
-    Plume2d_tail%ALPHA  = 0.0e+0_fp
-    Plume2d_tail%LIFE = 0.0e+0_fp
-
-    Plume2d_tail%LENGTH = Length_init ! m 
-    Plume2d_tail%PDX = Dx_init
-    Plume2d_tail%PDY = Dy_init
-    
-    ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species+num_of_sources)) ! add additional species here to track species that are newly added
-    Plume2d_tail%CONCNT2d = 0.0e+0_fp ! The final unit looks like (g/m3)
-    
-    ! pass all species as from background as initial concentration, the original unit seems like v/v dry
-    DO N = 1, n_species
-      Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
-    ENDDO
     IF (use_lagrange) THEN
       
       !WRITE(6,*) 'debug, BZ: Tracer id_PASV_EU2  = ', id_PASV_EU2, &
       !        '  Tracer Name: ', TRIM(State_Chm%SpcData(id_PASV_EU2)%Info%Name)
       !id_PASV_EU  = State_Chm%nAdvect-1
       !id_PASV_EU2 = State_Chm%nAdvect
-
       ! set initial background concentration of injected aerosol as 0 in GCM
       ! output the apecies' name for double check ???
       !State_Chm%Species(id_PASV_EU2)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
@@ -459,7 +450,34 @@ CONTAINS
 
       ! injection is on, source larger than 0, add background to the plume grid
       ! Add ijected species
-    
+
+
+      ! Initialize the first plume segment
+      ALLOCATE(Plume2d_tail)
+      Plume2d_tail%IsNew = 1
+      Plume2d_tail%label = 1
+
+      !Plume2d_tail%LON = Inject_lon
+      !Plume2d_tail%LAT = -29.95e+0_fp
+      !Plume2d_tail%LEV = Inject_hPa
+      Plume2d_tail%LON   = Plume_sources(1)%lon
+      Plume2d_tail%LAT   = Plume_sources(1)%lat1
+      Plume2d_tail%LEV   = Plume_sources(1)%lev
+
+      Plume2d_tail%ALPHA  = 0.0e+0_fp
+      Plume2d_tail%LIFE = 0.0e+0_fp
+
+      Plume2d_tail%LENGTH = Length_init ! m 
+      Plume2d_tail%PDX = Dx_init
+      Plume2d_tail%PDY = Dy_init
+      
+      ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species+num_of_sources)) ! add additional species here to track species that are newly added
+      Plume2d_tail%CONCNT2d = 0.0e+0_fp ! The final unit looks like (g/m3)
+      
+      ! pass all species as from background as initial concentration
+      DO N = 1, n_species
+        Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
+      ENDDO
 
       ! add injected species to the center of plume grid
       DO N = 1, num_of_sources
@@ -475,6 +493,7 @@ CONTAINS
       ENDDO
       NULLIFY(Plume2d_tail%next)
       Plume2d_head => Plume2d_tail
+      Num_Plume2d = 1
     ELSE
       ! add injected species into eulerian grid
       WRITE(6,'(a)') ' lagrange module was turned off, add injected species to eulerian grid'
@@ -482,10 +501,12 @@ CONTAINS
         spc_name = Plume_sources(N)%species
         id_tracer   = Ind_(spc_name)
         Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
-                + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-                    /(DX * DY * State_Met%BXHEIGHT(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
+                + (Length_init * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(State_Met%AIRVOL(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
       ENDDO
     ENDIF
+    Num_inject = 1
+    tt = 0
     !  WRITE(6,'(a)') ' '
     !  WRITE(6,'(a)') '********************************************************'
     !  WRITE(6,'(a)') ' You are using lagrange_mod now'
@@ -540,237 +561,251 @@ CONTAINS
 
     USE Plume_list
 
-    USE Input_Opt_Mod,   ONLY : OptInput
+    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
     USE State_Met_Mod,   ONLY : MetState
-    USE State_Chm_Mod,   ONLY : ChmState
+    USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Grid_Mod,  ONLY : GrdState
-
+    USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
-    USE UnitConv_Mod,    ONLY : Convert_Spc_Units, MOLECULES_SPECIES_PER_CM3
+    USE UnitConv_Mod !,    ONLY : Convert_Spc_Units, MOLECULES_SPECIES_PER_CM3
 
 
     LOGICAL,        INTENT(IN)    :: am_I_Root   ! Are we on the root CPU
     TYPE(MetState), intent(in)    :: State_Met
     TYPE(ChmState), intent(inout) :: State_Chm
     TYPE(OptInput), intent(in)    :: Input_Opt
-    TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
+    TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State object
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
+    
+    TYPE(SpcConc), POINTER :: Spc(:)
+
+    !REAL(fp), POINTER :: X_edge(:), Y_edge(:)
+    !REAL(fp)          :: X_edge2, Y_edge2
 
 
-    real(fp), pointer :: X_edge(:), Y_edge(:)
-    real(fp)          :: X_edge2, Y_edge2
-
-
-    integer  :: i_box
-
-    integer  :: i_lon, i_lat, i_lev
-    real(fp) :: box_lon, box_lat, box_lev
-
-    real(fp), pointer  :: PASV_EU
-    integer            :: nAdv
-    REAL(fp)           :: MW_g
-
-    integer  :: i_advect1
-
-    REAL(fp) :: Dt
-
-    real(fp) :: Entropy2_Concnt, Entropy2_V, Entropy2
-    real(fp) :: tracer2_mol, air2_mol, mix2_ratio
-
-    real(fp) :: tracer0_mol, air0_mol, mix0_ratio
+    INTEGER                :: i_box, i_lon, i_lat, i_lev 
+    INTEGER                :: nAdv, i_advect1
+    INTEGER                :: id_tracer, N
+    INTEGER                :: OrigUnit
+    REAL(fp)               :: box_lon, box_lat, box_lev
+    REAL(fp), POINTER      :: PASV_EU
+    REAL(fp)               :: MW_g
+    REAL(fp)               :: Dt
+    REAL(fp)               :: Entropy2_Concnt, Entropy2_V, Entropy2
+    REAL(fp)               :: tracer2_mol, air2_mol, mix2_ratio
+    REAL(fp)               :: tracer0_mol, air0_mol, mix0_ratio
 
     !CHARACTER(LEN=63)      :: OrigUnit
-    INTEGER                :: OrigUnit
+    CHARACTER(LEN=255)     :: spc_name
     CHARACTER(LEN=255)     :: ErrMsg
     CHARACTER(LEN=255)     :: FileEntropy
+    CHARACTER(LEN=255)     :: ThisLoc
+    
+    
+    
+    
+    !X_edge => State_Grid%XEdge(:,1) 
+    !Y_edge => State_Grid%YEdge(1,:) 
+    !X_edge2       = X_edge(2)
+    !Y_edge2       = Y_edge(2)
+    ErrMsg                 =    ''
+    Dt                     =    GET_TS_DYN()
+    Spc                    =>   State_Chm%Species
+    ThisLoc                =   ' -> at plume_inject (in module GeosCore/lagrange_mod.F90)'
 
-    ErrMsg = ''
+    IF (.not.plume_inject_on) THEN
+      !WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip '
+      RETURN
+    ENDIF
+    IF (plume_inject_on .AND. num_of_sources.lt.1) THEN
+      ErrMsg = 'Plume injection is turned on but no source specified'
+      CALL GC_Error( ErrMsg, RC, ThisLoc )
+      RETURN
+    ENDIF
 
-    IF(.NOT. Input_Opt%LagrangianModel_Activate)THEN 
-    ! instantly dissolve injected plume into Eulerian grid 
+    ! -----------------------------------------------------------
+    ! add new box every time step
+    ! -----------------------------------------------------------
+    ! N_stop_inject<0: keep injecting plume in the whole simulation;
+    ! Num_inject<N_stop_inject: only inject N_stop_inject plumes at
+    !                           beginning;
+    IF(N_stop_inject<0.OR.Num_inject<N_stop_inject)THEN
+      
+      IF (.NOT. use_lagrange) THEN
+        DO i_box = Num_inject+1, Num_inject+N_parcel, 1
+          box_lon    = Plume_sources(1)%lon
+          !box_lat    = ( Plume_sources(1)%lat1 + Length_lat * MOD(i_box,N_total) ) &
+          !             * (-1.0)**FLOOR(1.0*i_box/N_total) ! -29.995S:29.995N:0.01
+          box_lat    = GetInjectionLat(Plume_sources(1)%lat1,Plume_sources(1)%lat2,plume_interval,i_box)
+          write(6,*) 'debug (BZ): injection lat: ', box_lat
+          box_lev    = Plume_sources(1)%lev
 
-      Dt = GET_TS_DYN()
+          i_lon = Find_iLonLat(box_lon, DX, X_edge2)
+          if(i_lon>IIPAR) i_lon=i_lon-IIPAR
+          if(i_lon<1) i_lon=i_lon+IIPAR
+          !WRITE(6,*) 'debug: ilon=', i_lon
+          i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
+          if(i_lat>JJPAR) i_lat=JJPAR
+          if(i_lat<1) i_lat=1
+          !WRITE(6,*) 'debug: ilat=', i_lat
+          i_lev = Find_iPLev(box_lev,P_edge)
+          !WRITE(6,*) 'debug: curr_lev=', curr_lev
+          !WRITE(6,*) 'debug: P_edge(1)=', curr_lev
+          !WRITE(6,*) 'debug: ilev1=', i_lev
+          if(i_lev>LLPAR) i_lev=LLPAR
 
-      X_edge => State_Grid%XEdge(:,1) !XEDGE(:,1,1)   ! IIPAR+1 ! new
-      Y_edge => State_Grid%YEdge(1,:) !YEDGE(1,:,1)  
-      ! Use second YEDGE, because sometimes YMID(2)-YMID(1) is not DLAT
+          ! instantly add injected species into Eulerian grid 
+          DO N = 1, num_of_sources
+            spc_name = Plume_sources(N)%species
+            id_tracer   = Ind_(spc_name)
+            Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
+                    + (Length_init * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(State_Met%AIRVOL(i_lon, i_lat, i_lev) * 1.0e+6_fp) ! molec/cm3
+                    !(DX * DY * State_Met%BXHEIGHT(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
+          ENDDO
 
-      X_edge2       = X_edge(2)
-      Y_edge2       = Y_edge(2) 
+          ! No plume seg created, do I need to calculate entropy?
+          !-----------------------------------------------------------
+          ! calculte the perfect entropy in Plume-in-Grid model without any
+	        ! diffusion, all the injected tracer stay in the center 2-D grid 
+          ! cell forever.
+          ! State_Met%AIRDEN: [kg m-3]
+          ! State_Met%AIRVOL: [m3]
 
-      ! -----------------------------------------------------------
-      ! add new box every time step
-      ! -----------------------------------------------------------
-      IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
-        ! N_stop_inject<0: keep injecting plume in the whole simulation;
-        ! Num_inject<N_stop_inject: only inject N_stop_inject plumes at
-        !                           beginning;
+          !tracer0_mol = Length_init*30.0/98.0 ! [mol] ( inject: 30.0 g/m )
+          !air0_mol    = Dx_init*Dy_init*Length_init & ! [m]*[m]*[m]
+          !*State_Met%AIRDEN(i_lon,i_lat,i_lev)*1000/AIRMW ! [mol]
+          !mix0_ratio  = tracer0_mol/air0_mol
+          !IF(mix0_ratio>0) Entropy0 = Entropy0 - BOLTZ*tracer0_mol*log(mix0_ratio)
+          !-----------------------------------------------------------
 
-      DO i_box = Num_inject+1, Num_inject+N_parcel, 1
+          ! ====================================================================
+          ! Add concentraion of PASV into conventional Eulerian GEOS-Chem in 
+          ! corresponding with injected parcels in Lagrangian model
+          ! For conventional GEOS-Chem for comparison with Lagrangian Model:
+          !
+          !  AD(I,J,L) = grid box dry air mass [kg]
+          !  AIRMW     = dry air molecular wt [g/mol]
+          !  MW_G(N)   = species molecular wt [g/mol]
+          !     
+          ! the conversion is:
+          ! 
+          !====================================================================
+          !PASV_EU => State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)  ! original unit is v/v, need to convert to [kg/kg]? BZ
 
-        box_lon    = Plume_sources(1)%lon
-        box_lat    = ( -30.005e+0_fp + Length_lat * MOD(i_box,N_total) ) &
-                     * (-1.0)**FLOOR(1.0*i_box/N_total) ! -29.995S:29.995N:0.01
-        box_lev    = Plume_sources(1)%lev
+          !MW_g = State_Chm%SpcData(nAdv)%Info%MW_g
+          ! Here assume the injection rate is 30 kg/km for H2SO4: 
+          !PASV_EU = PASV_EU + Length_init*1.0e-3_fp*30.0 &
+          !                            /State_Met%AD(i_lon,i_lat,i_lev)
 
+        ENDDO 
+        Num_inject = Num_inject + N_parcel
+      ELSE ! use_lagrange = 1
+        ! State_Chm%Species(id_PASV_LA3)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
 
-        i_lon = Find_iLonLat(box_lon, DX, X_edge2)
-        if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-        if(i_lon<1) i_lon=i_lon+IIPAR
-
-        i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
-        if(i_lat>JJPAR) i_lat=JJPAR
-        if(i_lat<1) i_lat=1
-
-        i_lev = Find_iPLev(box_lev,P_edge)
-        if(i_lev>LLPAR) i_lev=LLPAR
-
-        IF(i_lev==LLPAR) WRITE(6,*) 'box_lev:', box_lev, i_lev
-        IF(ABS(box_lat)>40) WRITE(6,*)'*** ERROR in box_lat:', i_box, box_lat
-
-        ! ====================================================================
-        ! Add concentraion of PASV into conventional Eulerian GEOS-Chem in 
-        ! corresponding with injected parcels in Lagrangian model
-        ! For conventional GEOS-Chem for comparison with Lagrangian Model:
-        !
-        !  AD(I,J,L) = grid box dry air mass [kg]
-        !  AIRMW     = dry air molecular wt [g/mol]
-        !  MW_G(N)   = species molecular wt [g/mol]
-        !     
-        ! the conversion is:
-        ! 
-        !====================================================================
-        PASV_EU => State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)  ! original unit is v/v, need to convert to [kg/kg]? BZ
-
-        MW_g = State_Chm%SpcData(nAdv)%Info%MW_g
-        ! Here assume the injection rate is 30 kg/km for H2SO4: 
-        PASV_EU = PASV_EU + Length_init*1.0e-3_fp*30.0 &
-                                    /State_Met%AD(i_lon,i_lat,i_lev)
-
-
-
-
-
-	! calculte the perfect entropy in Plume-in-Grid model without any
-	! diffusion, all the injected tracer stay in the center 2-D grid 
-	! cell forever.
-	! State_Met%AIRDEN: [kg m-3]
-	! State_Met%AIRVOL: [m3]
-
-        tracer0_mol = Length_init*30.0/98.0 ! [mol] ( inject: 30.0 g/m )
-        air0_mol    = Dx_init*Dy_init*Length_init & ! [m]*[m]*[m]
-		     *State_Met%AIRDEN(i_lon,i_lat,i_lev)*1000/AIRMW ! [mol]
-        mix0_ratio  = tracer0_mol/air0_mol
-
-        IF(mix0_ratio>0) Entropy0 = Entropy0 - BOLTZ*tracer0_mol*log(mix0_ratio)
-
-
-
-      ENDDO ! i_box = Num_inject+1, Num_inject+N_parcel, 1
-
-      ! use this value to set the initial latutude for injected plume
-      Num_inject = Num_inject + N_parcel
+        CALL lagrange_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+        CALL plume_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+        CALL lagrange_write_std( am_I_Root, RC )
 
       ENDIF ! IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
-
-
+      !Num_inject = Num_inject + N_parcel
+      tt = tt + 1
+    ENDIF
       !======================================================================
       ! Convert species to [molec/cm3] (ewl, 8/16/16)
       !======================================================================
-      CALL Convert_Spc_Units( Input_Opt, State_Chm, State_Grid, State_Met, &
-                              new_units=MOLECULES_SPECIES_PER_CM3, RC = RC, previous_units=OrigUnit )
-      IF ( RC /= GC_SUCCESS ) THEN
-         ErrMsg = 'Unit conversion error!'
-         CALL GC_Error( ErrMsg, RC, 'plume_run in lagrange_mod.F90')
-         RETURN
-      ENDIF
+      !CALL Convert_Spc_Units( Input_Opt, State_Chm, State_Grid, State_Met, &
+      !                        new_units=MOLECULES_SPECIES_PER_CM3, RC = RC, previous_units=OrigUnit )
+      !IF ( RC /= GC_SUCCESS ) THEN
+      !   ErrMsg = 'Unit conversion error!'
+      !   CALL GC_Error( ErrMsg, RC, 'plume_run in lagrange_mod.F90')
+      !   RETURN
+      !ENDIF
 
 
       !======================================================================
       ! run the fake 2nd order chemical reaction
       !======================================================================
 
-      !$OMP PARALLEL DO           &
-      !$OMP DEFAULT( SHARED     ) &
-      !$OMP PRIVATE( i_lev, i_lat, i_lon )
-      DO i_lev = 1, LLPAR
-      DO i_lat = 1, JJPAR
-      DO i_lon = 1, IIPAR
+      !!$OMP PARALLEL DO           &
+      !!$OMP DEFAULT( SHARED     ) &
+      !!$OMP PRIVATE( i_lev, i_lat, i_lon )
+      !DO i_lev = 1, LLPAR
+      !DO i_lat = 1, JJPAR
+      !DO i_lon = 1, IIPAR
 
       ! from EU to EU2
-      State_Chm%Species(id_PASV_EU2)%Conc(i_lon,i_lat,i_lev) = &
-              State_Chm%Species(id_PASV_EU2)%Conc(i_lon,i_lat,i_lev) &
-            + Dt* Kchem*State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)**2
+      !State_Chm%Species(id_PASV_EU2)%Conc(i_lon,i_lat,i_lev) = &
+      !        State_Chm%Species(id_PASV_EU2)%Conc(i_lon,i_lat,i_lev) &
+      !      + Dt* Kchem*State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)**2
 
 
       !  For all the grid cells in the troposphere, let concentration to be zero
-      IF(TROPP_sink == 1)THEN
-      IF ( State_Met%PEDGE(i_lon,i_lat,i_lev) > State_Met%TROPP(i_lon,i_lat) ) THEN
+      !IF(TROPP_sink == 1)THEN
+      !IF ( State_Met%PEDGE(i_lon,i_lat,i_lev) > State_Met%TROPP(i_lon,i_lat) ) THEN
         ! State_Chm%Species(:)%Conc(i_lon,i_lat,i_lev) = 0.0
-		DO nspec = 1, State_Chm%nSpecies
-			State_Chm%Species(nspec)%Conc(i_lon,i_lat,i_lev) = 0.0
-		END DO
-      ENDIF
-      ENDIF
+		!DO nspec = 1, State_Chm%nSpecies
+	!		State_Chm%Species(nspec)%Conc(i_lon,i_lat,i_lev) = 0.0
+		!END DO
+     ! ENDIF
+      !ENDIF
 
 
-      ENDDO
-      ENDDO
-      ENDDO
-      !$OMP END PARALLEL DO
-
-
+      !ENDDO
+      !ENDDO
+      !ENDDO
+      !!$OMP END PARALLEL DO
 
     ! Calculate Entropy for Eulerian model
-    IF(mod(tt*NINT(Dt),24*60*60)==0)THEN   ! output once every day (24 hours)
+    !IF(mod(tt*NINT(Dt),24*60*60)==0)THEN   ! output once every day (24 hours)
 
-      DO i_lon = 1, IIPAR
-      DO i_lat = 1, JJPAR
-      DO i_lev = 1, LLPAR
+    !  DO i_lon = 1, IIPAR
+    !  DO i_lat = 1, JJPAR
+    !  DO i_lev = 1, LLPAR
 	! AIRDEN [kg m-3]
 	! AIRVOL [m3]
 
-        Entropy2_Concnt = State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)
-        Entropy2_V = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
+    !    Entropy2_Concnt = State_Chm%Species(id_PASV_EU)%Conc(i_lon,i_lat,i_lev)
+    !    Entropy2_V = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
 
-        tracer2_mol = Entropy2_Concnt*Entropy2_V/AVO
-        air2_mol    = Entropy2_V/1e+6_fp*State_Met%AIRDEN(i_lon,i_lat,i_lev)*1000/AIRMW
-        mix2_ratio  = tracer2_mol/air2_mol
+    !    tracer2_mol = Entropy2_Concnt*Entropy2_V/AVO
+    !    air2_mol    = Entropy2_V/1e+6_fp*State_Met%AIRDEN(i_lon,i_lat,i_lev)*1000/AIRMW
+    !    mix2_ratio  = tracer2_mol/air2_mol
 
-        IF(mix2_ratio>0) Entropy2 = Entropy2 - BOLTZ*tracer2_mol*log(mix2_ratio)
+    !    IF(mix2_ratio>0) Entropy2 = Entropy2 - BOLTZ*tracer2_mol*log(mix2_ratio)
 
-      ENDDO
-      ENDDO
-      ENDDO
-
-
-
-      FileEntropy   = 'Plume_entropy.txt'
-      OPEN( 487,      FILE=TRIM( FileEntropy   ), STATUS='OLD',  &
-           POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-
-      WRITE(*,*) "Entropy:", Entropy2, Entropy0
-      WRITE(487,*) Entropy2, Entropy0
-
-      CLOSE(487)
+    !  ENDDO
+    !  ENDDO
+    !  ENDDO
 
 
-    ENDIF
+
+    !  FileEntropy   = 'Plume_entropy.txt'
+    !  OPEN( 487,      FILE=TRIM( FileEntropy   ), STATUS='OLD',  &
+    !       POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+
+    !  WRITE(*,*) "Entropy:", Entropy2, Entropy0
+    !  WRITE(487,*) Entropy2, Entropy0
+
+    !  CLOSE(487)
+
+
+    !ENDIF
 
 
       !=======================================================================
       ! Convert species back to original units (ewl, 8/16/16)
       !=======================================================================
-      CALL Convert_Spc_Units( Input_Opt, State_Chm,  State_Grid, State_Met, &
-                              OrigUnit,  RC )
+    !  CALL Convert_Spc_Units( Input_Opt, State_Chm,  State_Grid, State_Met, &
+    !                          OrigUnit,  RC )
 
-      IF ( RC /= GC_SUCCESS ) THEN
-         ErrMsg = 'Unit conversion error!'
-         CALL GC_Error( ErrMsg, RC, 'plume_mod.F90' )
-         RETURN
-      ENDIF
+    !  IF ( RC /= GC_SUCCESS ) THEN
+    !     ErrMsg = 'Unit conversion error!'
+    !     CALL GC_Error( ErrMsg, RC, 'plume_mod.F90' )
+    !     RETURN
+    !  ENDIF
 
-    ENDIF ! IF(use_lagrange==0)THEN
+    !ENDIF ! IF(use_lagrange==0)THEN
 
 
     !=======================================================================
@@ -778,19 +813,15 @@ CONTAINS
     ! use plume model
     !
     !=======================================================================
-    IF(Input_Opt%LagrangianModel_Activate)THEN
+    !IF(use_lagrange)THEN
 
     ! call the lagrnage_run() and plume_run() to calculate injected plume
 
-      State_Chm%Species(id_PASV_LA3)%Conc(:,:,:) = 0.0e+0_fp  ! [kg/kg]
 
-      CALL lagrange_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-      CALL plume_run(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-      CALL lagrange_write_std( am_I_Root, RC )
 
-    ENDIF
+    !ENDIF
 
-    tt = tt + 1
+    
 
   END SUBROUTINE plume_inject
 
@@ -800,68 +831,57 @@ CONTAINS
 
     USE Plume_list
 
-    USE Input_Opt_Mod, ONLY : OptInput
-
-    USE State_Chm_Mod, ONLY : ChmState
-    USE State_Met_Mod, ONLY : MetState
-
-    USE TIME_MOD,      ONLY : GET_TS_DYN
+    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE State_Chm_Mod,   ONLY : ChmState, Ind_
+    USE State_Met_Mod,   ONLY : MetState
+    USE Species_Mod,     ONLY : SpcConc
+    USE TIME_MOD,        ONLY : GET_TS_DYN
+    USE State_Grid_Mod,  ONLY : GrdState
+    USE UnitConv_Mod
 
 !    USE GC_GRID_MOD,   ONLY : XEDGE, YEDGE
-              
 !    USE CMN_SIZE_Mod,  ONLY : DLAT, DLON !new
-    USE State_Grid_Mod,  ONLY : GrdState
 
-    USE UnitConv_Mod,  ONLY : Convert_Spc_Units
-
-
-    logical, intent(in)           :: am_I_Root
-    TYPE(MetState), intent(in)    :: State_Met
-    TYPE(ChmState), intent(inout) :: State_Chm
+    LOGICAL, INTENT(IN)           :: am_I_Root
+    TYPE(MetState), INTENT(IN)    :: State_Met
+    TYPE(ChmState), INTENT(INOUT) :: State_Chm
     TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
-    TYPE(OptInput), intent(in)    :: Input_Opt
+    TYPE(OptInput), INTENT(IN)    :: Input_Opt
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
 
-    REAL(fp) :: Dt, RK_Dt(5)                  ! = 600.0e+0_fp          
+    TYPE(SpcConc), POINTER :: Spc(:)
+    
+           
+    INTEGER                :: nAdv
+    INTEGER                :: i_box
+    INTEGER                :: i_lon, i_lat, i_lev, i_lon_1, i_lat_1, i_lev_1 
+    INTEGER                :: next_i_lon, next_i_lat, next_i_lev  
+    INTEGER                :: ii, jj, kk
+    INTEGER                :: ki
+    INTEGER                :: i_species, id_tracer
+    INTEGER                :: i_x, i_y
+    INTEGER                :: i_slab
 
-    real(fp), pointer  :: PASV_EU           
-    integer            :: nAdv        
-    REAL(fp)           :: MW_g
+    REAL(fp)               :: MW_g
+    REAL(fp)               :: Dt, RK_Dt(5)                  ! = 600.0e+0_fp          
+    REAL(fp), POINTER      :: PASV_EU    
+    REAL(fp)               :: curr_lon, curr_lat, curr_pressure
+    REAL(fp)               :: RK_lon, RK_lat
+    !REAL(fp)               :: X_edge2, Y_edge2
+    REAL(fp)               :: dbox_lon, dbox_lat, dbox_lev
+    REAL(fp)               :: dbox_x_PS, dbox_y_PS
+    REAL(fp)               :: box_x_PS, box_y_PS
+    REAL(fp)               :: RK_Dlon(4), RK_Dlat(4), RK_Dlev(4)
+    REAL(fp)               :: RK_x_PS, RK_y_PS
+    REAL(fp)               :: RK_Dx_PS, RK_Dy_PS
+    REAL(fp)               :: RK_u(4), RK_v(4), RK_omeg(4)
 
-    integer :: i_box
-
-    ! 1:IIPAR
-    integer :: i_lon, i_lat, i_lev
-    integer :: next_i_lon, next_i_lat, next_i_lev
-
-    integer :: ii, jj, kk
-
-    integer :: Ki
-
-    integer :: i_species
-    integer :: i_x, i_y
-    integer :: i_slab
-
-
-    real(fp) :: curr_lon, curr_lat, curr_pressure
-    real(fp) :: RK_lon, RK_lat
-    real(fp) :: X_edge2, Y_edge2
-
-    real(fp) :: dbox_lon, dbox_lat, dbox_lev
-    real(fp) :: dbox_x_PS, dbox_y_PS
-    real(fp) :: box_x_PS, box_y_PS
-
-    real(fp) :: RK_Dlon(4), RK_Dlat(4), RK_Dlev(4)
-    real(fp) :: RK_x_PS, RK_y_PS
-    real(fp) :: RK_Dx_PS, RK_Dy_PS
-    real(fp) :: RK_u(4), RK_v(4), RK_omeg(4)
-
-    real(fp), pointer :: u(:,:,:)
-    real(fp), pointer :: v(:,:,:)
-    real(fp), pointer :: omeg(:,:,:)
-    real(fp), pointer :: Ptemp(:,:,:)
-    real(fp), pointer :: T1(:,:,:)
-    real(fp), pointer :: T2(:,:,:)
+    REAL(fp), POINTER      :: u(:,:,:)
+    REAL(fp), POINTER      :: v(:,:,:)
+    REAL(fp), POINTER      :: omeg(:,:,:)
+    REAL(fp), POINTER      :: Ptemp(:,:,:)
+    REAL(fp), POINTER      :: T1(:,:,:)
+    REAL(fp), POINTER      :: T2(:,:,:)
 
     real(fp) :: curr_T1, next_T2, ratio
     real(fp) :: V_prev, V_new
@@ -870,7 +890,7 @@ CONTAINS
     real(fp) :: curr_u, curr_v, curr_omeg
     real(fp) :: curr_u_PS, curr_v_PS
 
-    real(fp), pointer :: X_edge(:), Y_edge(:)
+    !real(fp), pointer :: X_edge(:), Y_edge(:)
 
 
     real(fp) :: length0
@@ -895,29 +915,25 @@ CONTAINS
 
     real(fp)  :: start, finish
 
-    TYPE(Plume2d_list), POINTER :: Plume2d_new, PLume2d, Plume2d_prev
-    TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d, Plume1d_prev
+    TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
+    TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d_curr, Plume1d_prev
 
-
+    CHARACTER(LEN=255)            :: spc_name
 
     !CHARACTER(LEN=63)      :: OrigUnit
     INTEGER :: OrigUnit
     CHARACTER(LEN=255)     :: ErrMsg
-    
+    CHARACTER(LEN=255)     :: ThisLoc
 
     Dt = GET_TS_DYN()
-
-
-    IF(Stop_inject==1) GOTO 400
-
-    allocate(box_concnt_2D(n_x_max, n_y_max, n_species))
-    allocate(box_concnt_1D(n_slab_max, n_species))
-
-
+    ThisLoc                =   ' -> at lagrange_run (in module GeosCore/lagrange_mod.F90)'
     RC     =  GC_SUCCESS
     ErrMsg = ''
 
+    IF(Stop_inject==1) GOTO 400 ! deallocate and nullify -> exit
 
+    ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species + Num_of_sources)) ! add additional species here to track species that are newly added
+    ALLOCATE(box_concnt_1D(n_slab_max, n_species + Num_of_sources))
 
     RK_Dt(1) = 0.0
     RK_Dt(2) = 0.5*Dt
@@ -925,31 +941,27 @@ CONTAINS
     RK_Dt(4) = Dt
     RK_Dt(5) = 0.0
 
-    u     => State_Met%U   ! figure out state_met%U is based on
-                           !  lat/lon or modelgrid(i,j)
-    v     => State_Met%V   ! V [m s-1]
+    u     => State_Met%U   ! m/s
+    v     => State_Met%V   ! m/s
     omeg  => State_Met%OMEGA     ! Updraft velocity [Pa/s]
     Ptemp => State_Met%THETA     ! Potential temperature [K]
-    T1    => State_Met%TMPU1     ! Temperature at start of
-                                 !  timestep [K]
-    T2    => State_Met%TMPU2     ! Temperature at end of
-                                 !  timestep [K]
+    T1    => State_Met%TMPU1     ! Temperature at start of timestep [K]
+    T2    => State_Met%TMPU2     ! Temperature at end of timestep [K]
 
-    X_edge => State_Grid%XEdge(:,1) !XEDGE(:,1,1)   ! IIPAR+1 ! new
-    Y_edge => State_Grid%YEdge(1,:) !YEDGE(1,:,1)  
+    !X_edge => State_Grid%XEdge(:,1) !XEDGE(:,1,1)   ! IIPAR+1 ! new
+    !Y_edge => State_Grid%YEdge(1,:) !YEDGE(1,:,1)  
     ! Use second YEDGE, because sometimes YMID(2)-YMID(1) is not DLAT
-
-    X_edge2       = X_edge(2)
-    Y_edge2       = Y_edge(2)
+    !X_edge2       = X_edge(2)
+    !Y_edge2       = Y_edge(2)
      
     
 
 
     ! -----------------------------------------------------------
-    ! add new box every time step
+    ! add new box every time step, 
     ! -----------------------------------------------------------
-    IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
-    DO i_box = Num_inject+1, Num_inject+N_parcel, 1
+    !IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
+    DO i_box = Num_inject+1, Num_inject+N_parcel, 1 !BZ: consider putting this loop in subroutine: plume_inject
 
       ALLOCATE(Plume2d_new)
 
@@ -957,51 +969,75 @@ CONTAINS
       Plume2d_new%label = i_box
 
       Plume2d_new%LON = Plume_sources(1)%lon
-      Plume2d_new%LAT = ( -30.005e+0_fp + Length_lat * MOD(i_box,N_total) ) &
-                     * (-1.0)**FLOOR(1.0*i_box/N_total) 
+      Plume2d_new%LAT = GetInjectionLat(Plume_sources(1)%lat1,Plume_sources(1)%lat2,plume_interval,i_box)
+      write(6,*) 'debug (BZ): injection lat: ', box_lat
+      Plume2d_new%LEV = Plume_sources(1)%lev
+      !Plume2d_new%LAT = ( -30.005e+0_fp + Length_lat * MOD(i_box,N_total) ) &
+      !               * (-1.0)**FLOOR(1.0*i_box/N_total) 
 !      Plume2d_new%LAT = ( -30.005e+0_fp + 0.01e+0_fp * MOD(i_box,6000) ) &
 !                     * (-1.0)**FLOOR(i_box/6000.0) ! -29.995S:29.995N:0.01
-      Plume2d_new%LEV = Plume_sources(1)%lev
+
+      i_lon = Find_iLonLat(Plume2d_new%LON, DX, X_edge2)
+      if(i_lon>IIPAR) i_lon=i_lon-IIPAR
+      if(i_lon<1) i_lon=i_lon+IIPAR
+      i_lat = Find_iLonLat(Plume2d_new%LAT, DY, Y_edge2)
+      if(i_lat>JJPAR) i_lat=JJPAR
+      if(i_lat<1) i_lat=1
+      i_lev = Find_iPLev(Plume2d_new%LEV,P_edge)
+      if(i_lev>LLPAR) i_lev=LLPAR
 
       Plume2d_new%LENGTH = Length_init ! 1000m 
       Plume2d_new%ALPHA  = 0.0e+0_fp
-
-      Plume2d_new%LIFE = 0.0e+0_fp
-
-      Plume2d_new%PDX = Dx_init
-      Plume2d_new%PDY = Dy_init
+      Plume2d_new%LIFE   = 0.0e+0_fp
+      Plume2d_new%PDX    = Dx_init
+      Plume2d_new%PDY    = Dy_init
 
 
-      ALLOCATE(Plume2d_new%CONCNT2d(n_x_max, n_y_max, n_species))
-      Plume2d_new%CONCNT2d = 0.0e+0_fp
-      Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = Plume2d_new%LENGTH*30.0 &
-                   / (Plume2d_new%PDX*Plume2d_new%Pdy*Plume2d_new%LENGTH)
-      ! From [g/m3] to [molec/cm3], 98.0 g/mol for H2SO4
-      Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = &
-                Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer)/1.0e+6_fp/98.0*AVO
+      ALLOCATE(Plume2d_new%CONCNT2d(n_x_max, n_y_max, n_species+num_of_sources))
 
-
-      mass_la = mass_la + Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer)* &
-             (Plume2d_new%PDX*Plume2d_new%Pdy*Plume2d_new%LENGTH*1.0e+6_fp)
-
-
-
+      ! pass background concentration
+      DO i_species = 1, n_species
+        Plume2d_new%CONCNT2d(:,:,i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
+      ENDDO
+      ! add tracer concentration
+      DO i_species = 1, num_of_sources
+        spc_name = Plume_sources(i_species)%species
+        id_tracer   = Ind_(spc_name)
+        Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
+                    + (Plume2d_new%LENGTH * Plume_sources(i_species)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(Plume2d_new%PDX * Plume2d_new%PDY *Plume2d_new%LENGTH*1.E6_fp ) ! molec/cm3
+                    
+         Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,n_species+i_species) = Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,n_species+i_species)  &
+                    + (Plume2d_new%LENGTH * Plume_sources(i_species)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+                    /(Plume2d_new%PDX * Plume2d_new%PDY *Plume2d_new%LENGTH*1.E6_fp ) ! molec/cm3
+      ENDDO
       NULLIFY(Plume2d_new%next)
       Plume2d_tail%next => Plume2d_new
       Plume2d_tail => Plume2d_tail%next
+      
+      ! track total mass injected
+
+      
+      !Plume2d_new%CONCNT2d = 0.0e+0_fp
+      !Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = Plume2d_new%LENGTH*30.0 &
+      !             / (Plume2d_new%PDX*Plume2d_new%Pdy*Plume2d_new%LENGTH)
+      ! From [g/m3] to [molec/cm3], 98.0 g/mol for H2SO4
+      !Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer) = &
+      !          Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer)/1.0e+6_fp/98.0*AVO
+
+
+      !mass_la = mass_la + Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,i_tracer)* &
+      !       (Plume2d_new%PDX*Plume2d_new%Pdy*Plume2d_new%LENGTH*1.0e+6_fp)
+
 
 
     ENDDO ! i_box = Num_inject+1, Num_inject+N_parcel, 1
 
-      Num_Plume2d = Num_Plume2d + N_parcel
-
-      ! use this value to set the initial latutude for injected plume
-      Num_inject = Num_inject + N_parcel
+    Num_Plume2d = Num_Plume2d + N_parcel
+    Num_inject = Num_inject + N_parcel
 
 
-    ENDIF ! IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
-
-
+    !ENDIF ! IF(N_stop_inject<0.or.Num_inject<N_stop_inject)THEN
 
     !=======================================================================
     ! for 2D plume: Run Lagrangian trajectory-track HERE
@@ -1009,26 +1045,26 @@ CONTAINS
 
     IF(.NOT.ASSOCIATED(Plume2d_head)) GOTO 401
 
-    Plume2d => Plume2d_head
+    Plume2d_curr => Plume2d_head
     i_box = 0
 
-    DO WHILE(ASSOCIATED(Plume2d))
+    DO WHILE(ASSOCIATED(Plume2d_curr))
 
       i_box = i_box+1
 
-      box_lon    = Plume2d%LON
-      box_lat    = Plume2d%LAT
-      box_lev    = Plume2d%LEV
-      box_length = Plume2d%LENGTH
-      box_alpha  = Plume2d%ALPHA
+      box_lon    = Plume2d_curr%LON
+      box_lat    = Plume2d_curr%LAT
+      box_lev    = Plume2d_curr%LEV
+      box_length = Plume2d_curr%LENGTH
+      box_alpha  = Plume2d_curr%ALPHA
 
-      box_label  = Plume2d%label
-      box_life   = Plume2d%LIFE
+      box_label  = Plume2d_curr%label
+      box_life   = Plume2d_curr%LIFE
 
-      Pdx    = Plume2d%PDX
-      Pdy    = Plume2d%PDY
+      Pdx    = Plume2d_curr%PDX
+      Pdy    = Plume2d_curr%PDY
 
-      box_concnt_2D = Plume2d%CONCNT2d
+      box_concnt_2D = Plume2d_curr%CONCNT2d
 
 
       box_life = box_life + Dt
@@ -1041,40 +1077,28 @@ CONTAINS
       do while (box_lat > Y_edge(JJPAR+1))
          box_lat = Y_edge(JJPAR+1) - ( box_lat-Y_edge(JJPAR+1) )
       end do
-
       do while (box_lat < Y_edge(1))
          box_lat = Y_edge(1) + ( box_lat-Y_edge(1) )
       end do
-
       do while (box_lon > X_edge(IIPAR+1))
          box_lon = box_lon - 360.0
       end do
-
       do while (box_lon < X_edge(1))
          box_lon = box_lon + 360.0
       end do
 
+      i_lon = Find_iLonLat(box_lon, DX, X_edge2)
+      if(i_lon>IIPAR) i_lon=i_lon-IIPAR
+      if(i_lon<1) i_lon=i_lon+IIPAR
+      i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
+      if(i_lat>JJPAR) i_lat=JJPAR
+      if(i_lat<1) i_lat=1
+      i_lev = Find_iPLev(box_lev,P_edge)
+      if(i_lev>LLPAR) i_lev=LLPAR
 
       curr_lon      = box_lon
       curr_lat      = box_lat
-      curr_pressure = box_lev      ! hPa
-!      curr_T1       = box_T1(i_box)        ! K
-
-
-      i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
-      if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-      if(i_lon<1) i_lon=i_lon+IIPAR
-
-      i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
-      if(i_lat>JJPAR) i_lat=JJPAR
-      if(i_lat<1) i_lat=1
-
-      i_lev = Find_iPLev(curr_pressure,P_edge)
-      if(i_lev>LLPAR) i_lev=LLPAR
-
-      IF(i_lev==LLPAR) WRITE(6,*) 'box_lev:', curr_pressure, i_lev
-
-
+      curr_pressure = box_lev
 
       DO Ki = 1,4,1
 
@@ -1089,9 +1113,8 @@ CONTAINS
        endif
 
        RK_omeg(Ki) = curr_omeg
-
-
        RK_Dlev(Ki)   = Dt * curr_omeg / 100.0     ! Pa => hPa
+
        curr_pressure = box_lev + RK_Dt(Ki+1) * curr_omeg / 100.0
 
        if(curr_pressure<P_mid(LLPAR)) &
@@ -1105,10 +1128,8 @@ CONTAINS
        !------------------------------------------------------------------
        if(abs(curr_lat)<=72.0)then
 
-         curr_u = Interplt_wind_RLL(u, i_lon, i_lat, i_lev, curr_lon, &
-                                                  curr_lat, curr_pressure)
-         curr_v = Interplt_wind_RLL(v, i_lon, i_lat, i_lev, curr_lon, &
-                                                  curr_lat, curr_pressure)
+         curr_u = Interplt_wind_RLL(u, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
+         curr_v = Interplt_wind_RLL(v, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
 
          RK_u(Ki) = curr_u
          RK_v(Ki) = curr_v
@@ -1226,15 +1247,9 @@ CONTAINS
                 (RK_Dlev(1)+2.0*RK_Dlev(2)+2.0*RK_Dlev(3)+RK_Dlev(4))/6.0
 
 
-
-      box_u    = ( RK_u(1) + 2.0*RK_u(2) &
-                         + 2.0*RK_u(3) + RK_u(4) ) / 6.0
-      box_v    = ( RK_v(1) + 2.0*RK_v(2) &
-                         + 2.0*RK_v(3) + RK_v(4) ) / 6.0
-      box_omeg = ( RK_omeg(1) + 2.0*RK_omeg(2) &
-                         + 2.0*RK_omeg(3) + RK_omeg(4) ) / 6.0
-
-
+      box_u    = ( RK_u(1) + 2.0*RK_u(2) + 2.0*RK_u(3) + RK_u(4) ) / 6.0
+      box_v    = ( RK_v(1) + 2.0*RK_v(2) + 2.0*RK_v(3) + RK_v(4) ) / 6.0
+      box_omeg = ( RK_omeg(1) + 2.0*RK_omeg(2) + 2.0*RK_omeg(3) + RK_omeg(4) ) / 6.0
 
 
       !--------------------------------------------------------------------
@@ -1248,8 +1263,6 @@ CONTAINS
                                         curr_lon, curr_lat, curr_pressure)
       endif
 
-
-
       i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
       if(i_lon>IIPAR) i_lon=i_lon-IIPAR
       if(i_lon<1) i_lon=i_lon+IIPAR
@@ -1259,24 +1272,20 @@ CONTAINS
       if(i_lat<1) i_lat=1
 
       i_lev = Find_iPLev(box_lev,P_edge)
-      if(i_lev>LLPAR)i_lev=LLPAR
+      if(i_lev>LLPAR) i_lev=LLPAR
 
 
       if(abs(box_lat)>Y_mid(JJPAR))then
-         next_T2 = Interplt_wind_RLL_polar(T2, i_lon, i_lat, i_lev, &
-                           box_lon, box_lat, box_lev)
+         next_T2 = Interplt_wind_RLL_polar(T2, i_lon_1, i_lat_1, i_lev_1, box_lon, box_lat, box_lev)
       else
-         next_T2 = Interplt_wind_RLL(T2, i_lon, i_lat, i_lev, &
-                           box_lon, box_lat, box_lev)
+         next_T2 = Interplt_wind_RLL(T2, i_lon_1, i_lat_1, i_lev_1, box_lon, box_lat, box_lev)
       endif
-
 
       ! PV=nRT, V2 = T2/P2 : T1/P1 * V1
       ratio = ( (next_T2/box_lev)/(curr_T1/curr_pressure) )**(1/2)
 
       ! assume the volume change mainly apply to the cross-section, 
       ! the box_length would not change 
-
 
       V_prev = Pdx*Pdy*box_length*1.0e+6_fp
 
@@ -1292,7 +1301,7 @@ CONTAINS
 !      WRITE(6,*)'Time1 (finish-start) for 2D:', i_box, finish-start
 
 
-      DO i_species = 1, n_species, 1
+      DO i_species = 1, n_species + num_of_sources, 1
       !$OMP PARALLEL DO           &
       !$OMP DEFAULT( SHARED     ) &
       !$OMP PRIVATE( i_y, i_x )
@@ -1338,26 +1347,28 @@ CONTAINS
       Pdx = Pdx*SQRT(length0/box_length)
       Pdy = Pdy*SQRT(length0/box_length)
 
-
+      ! ----------------------------------------------------------------
+      ! Entrainment/detrainment should be considered here
+      ! ----------------------------------------------------------------
 
       ! ----------------------------------------------------------------
       ! update     
       ! ----------------------------------------------------------------
-      Plume2d%LON = box_lon
-      Plume2d%LAT = box_lat
-      Plume2d%LEV = box_lev
-      Plume2d%LENGTH = box_length
-      Plume2d%ALPHA  = box_alpha
-      Plume2d%label   = box_label
-      Plume2d%LIFE   = box_life
+      Plume2d_curr%LON = box_lon
+      Plume2d_curr%LAT = box_lat
+      Plume2d_curr%LEV = box_lev
+      Plume2d_curr%LENGTH = box_length
+      Plume2d_curr%ALPHA  = box_alpha
+      Plume2d_curr%label   = box_label
+      Plume2d_curr%LIFE   = box_life
 
 
-      Plume2d%PDX = Pdx
-      Plume2d%PDY = Pdy
+      Plume2d_curr%PDX = Pdx
+      Plume2d_curr%PDY = Pdy
 
-      Plume2d%CONCNT2d    = box_concnt_2D
+      Plume2d_curr%CONCNT2d    = box_concnt_2D
 
-      Plume2d => Plume2d%next
+      Plume2d_curr => Plume2d_curr%next
 
     ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
 
@@ -1371,27 +1382,27 @@ CONTAINS
     IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
 
 
-    Plume1d => Plume1d_head
+    Plume1d_curr => Plume1d_head
     i_box = 0
 
-    DO WHILE(ASSOCIATED(Plume1d))
+    DO WHILE(ASSOCIATED(Plume1d_curr))
 
       i_box = i_box+1
 
 
-      box_lon    = Plume1d%LON
-      box_lat    = Plume1d%LAT
-      box_lev    = Plume1d%LEV
-      box_length = Plume1d%LENGTH
-      box_alpha  = Plume1d%ALPHA
-      box_label  = Plume1d%label
-      box_life   = Plume1d%LIFE
+      box_lon    = Plume1d_curr%LON
+      box_lat    = Plume1d_curr%LAT
+      box_lev    = Plume1d_curr%LEV
+      box_length = Plume1d_curr%LENGTH
+      box_alpha  = Plume1d_curr%ALPHA
+      box_label  = Plume1d_curr%label
+      box_life   = Plume1d_curr%LIFE
 
-      box_Ra    = Plume1d%RA
-      box_Rb    = Plume1d%RB
+      box_Ra    = Plume1d_curr%RA
+      box_Rb    = Plume1d_curr%RB
 
 
-      box_concnt_1D = Plume1d%CONCNT1d
+      box_concnt_1D = Plume1d_curr%CONCNT1d
 
 
       box_life = box_life + Dt
@@ -1687,20 +1698,20 @@ CONTAINS
 
 
 
-      Plume1d%LON    = box_lon
-      Plume1d%LAT    = box_lat
-      Plume1d%LEV    = box_lev
-      Plume1d%LENGTH = box_length
-      Plume1d%ALPHA  = box_alpha
-      Plume1d%label  = box_label
-      Plume1d%LIFE   = box_life
-      Plume1d%RA     = box_Ra
-      Plume1d%RB     = box_Rb
+      Plume1d_curr%LON    = box_lon
+      Plume1d_curr%LAT    = box_lat
+      Plume1d_curr%LEV    = box_lev
+      Plume1d_curr%LENGTH = box_length
+      Plume1d_curr%ALPHA  = box_alpha
+      Plume1d_curr%label  = box_label
+      Plume1d_curr%LIFE   = box_life
+      Plume1d_curr%RA     = box_Ra
+      Plume1d_curr%RB     = box_Rb
 
-      Plume1d%CONCNT1d = box_concnt_1D
+      Plume1d_curr%CONCNT1d = box_concnt_1D
 
 
-      Plume1d => Plume1d%next
+      Plume1d_curr => Plume1d_curr%next
 
     ENDDO  ! DO WHILE(ASSOCIATED(Plume1d))
 
@@ -1730,16 +1741,39 @@ CONTAINS
     IF(ASSOCIATED(PASV_EU)) nullify(PASV_EU)
 
     IF(ASSOCIATED(Plume2d_new)) nullify(Plume2d_new)
-    IF(ASSOCIATED(PLume2d)) nullify(PLume2d)
+    IF(ASSOCIATED(Plume2d_curr)) nullify(Plume2d_curr)
     IF(ASSOCIATED(Plume2d_prev)) nullify(Plume2d_prev)
     IF(ASSOCIATED(Plume1d_new)) nullify(Plume1d_new)
-    IF(ASSOCIATED(Plume1d)) nullify(Plume1d)
+    IF(ASSOCIATED(Plume1d_curr)) nullify(Plume1d_curr)
     IF(ASSOCIATED(Plume1d_prev)) nullify(Plume1d_prev)
 
   END SUBROUTINE lagrange_run
 
+!------------------------------------------------------------------
+! Get lattitude of injection at specific time step
+! This make sure plume seg created from lat1:dlat:lat2 -> lat2:-dlat,lat1 -> ...
+!------------------------------------------------------------------
+Real(fp) FUNCTION GetInjectionLat(lat1, lat2, dlat, global_id) 
+    implicit none
+    REAL(fp), INTENT(IN) :: lat1, lat2, dlat
+    INTEGER,  INTENT(IN) :: global_id
+    INTEGER              :: n_total, cycle_length
+    INTEGER              :: pos, idx
 
+    n_total = INT((lat2 - lat1)/dlat) + 1
+    cycle_length = 2*n_total - 2
 
+    pos = MOD(global_id-1, cycle_length)
+
+    IF (pos < n_total) THEN
+        idx = pos
+    ELSE
+        idx = cycle_length - pos
+    END IF
+
+    GetInjectionLat = lat1 + idx*dlat
+
+END FUNCTION GetInjectionLat
 !------------------------------------------------------------------
 ! calcualte the Lyaponov exponent (Ly), unit: s-1
 !------------------------------------------------------------------
@@ -2667,6 +2701,7 @@ CONTAINS
 
     CHARACTER(LEN=255)     :: FILENAME2
     !CHARACTER(LEN=63)      :: OrigUnit
+    CHARACTER(LEN=255)     :: ThisLoc
     CHARACTER(LEN=255)     :: ErrMsg
 
     INTEGER :: YEAR
@@ -2688,7 +2723,7 @@ CONTAINS
 
 
     Dt = GET_TS_DYN()
-
+    ThisLoc                =   ' -> at plume_run (in module GeosCore/lagrange_mod.F90)'
     Entropy = 0.0
 
 
@@ -5703,6 +5738,11 @@ CONTAINS
 
   subroutine lagrange_cleanup()
 
+
+    IF (.not.plume_inject_on) THEN
+      WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip cleanup'
+      RETURN
+    ENDIF
 
 
 !

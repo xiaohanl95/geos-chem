@@ -4003,6 +4003,30 @@ CONTAINS
     ENDIF
     Input_Opt%Initial_length = v_real
     !------------------------------------------------------------------------
+    ! Get aircraft speed
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%Plume_injection%aircraft_speed"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Aircraft_speed = v_real
+    !------------------------------------------------------------------------
+    ! Get plume_interval
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%Plume_injection%plume_interval"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%plume_interval = v_real
+    !------------------------------------------------------------------------
     ! Get number of x grid in 2d plume segment
     !------------------------------------------------------------------------
     key   = "Plume_sources%lagrangian_model%nx_2d"

@@ -286,6 +286,8 @@ MODULE Input_Opt_Mod
      REAL(fp)                    :: PlumeGrid2d_dx
      REAL(fp)                    :: PlumeGrid2d_dy
      REAL(fp)                    :: Initial_length
+     REAL(fp)                    :: Aircraft_speed
+     REAL(fp)                    :: Plume_interval
      !----------------------------------------
      ! GAMAP MENU fields
      !----------------------------------------
@@ -822,6 +824,8 @@ CONTAINS
     Input_Opt%PlumeGrid2d_dx           = 0.0_fp
     Input_Opt%PlumeGrid2d_dy           = 0.0_fp
     Input_Opt%Initial_length           = 0.0_fp
+    Input_Opt%Aircraft_speed           = 0.0_fp
+    Input_Opt%Plume_interval           = 0.0_fp
     !----------------------------------------
     ! OUTPUT MENU fields
     !----------------------------------------
