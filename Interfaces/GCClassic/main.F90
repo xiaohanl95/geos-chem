@@ -211,7 +211,7 @@ PROGRAM GEOS_Chem
   INTEGER                  :: ELAPSED_SEC,   NHMSb,       RC
   INTEGER                  :: ELAPSED_TODAY, HOUR,        MINUTE,  SECOND
   INTEGER                  :: id_H2O,        id_CH4,      id_CLOCK
-  INTEGER                  :: previous_units
+  INTEGER                  :: previous_units, previous_units_temp
   INTEGER                  :: id_SO2,  id_SO4  ! debug, used to check unit, BZ
 
   ! Reals
@@ -935,7 +935,9 @@ PROGRAM GEOS_Chem
                RC             = RC                                          )
 
        ENDIF
-	   
+       WRITE(6,'(a)') 'debug in main: before plume injection, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       WRITE(6,'(a)') 'debug in main: before plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
+       ! At this time, previous unit should be mol/mol dry, and new unit should be kg/kg dry
        !===============================================
        ! Lagrange Module
        !===============================================
@@ -948,7 +950,7 @@ PROGRAM GEOS_Chem
                State_Grid     = State_Grid,                                  &
                State_Met      = State_Met,                                   &
                new_units      = MOLECULES_SPECIES_PER_CM3,                   &
-               previous_units = previous_units,                              &
+               previous_units = previous_units_temp,                              &
                RC             = RC                                          )
        CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
 	    CALL Convert_Spc_Units(                                            &
@@ -956,8 +958,12 @@ PROGRAM GEOS_Chem
                State_Chm      = State_Chm,                                   &
                State_Grid     = State_Grid,                                  &
                State_Met      = State_Met,                                   &
-               new_units      = previous_units,                   &
+               new_units      = previous_units_temp,                   &
                RC             = RC                                          )
+        WRITE(6,'(a)') 'debug in main: after plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+        WRITE(6,'(a)') 'debug in main: after plume injection, the previous temporary unit is ' // TRIM(UNIT_STR( previous_units_temp))
+        WRITE(6,'(a)') 'debug in main: after plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
+        ! add temp variable to store previous_unit so it won't affect unit conversion later
        !=====================================================================
        !       ***** R U N   H E M C O   P H A S E   1 *****
        !
