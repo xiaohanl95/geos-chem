@@ -4017,15 +4017,15 @@ CONTAINS
     !------------------------------------------------------------------------
     ! Get plume_interval
     !------------------------------------------------------------------------
-    key   = "Plume_sources%Plume_injection%plume_interval"
-    v_real = MISSING_REAL
-    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
-    IF ( RC /= GC_SUCCESS ) THEN
-       errMsg = 'Error parsing ' // TRIM( key ) // '!'
-       CALL GC_Error( errMsg, RC, thisLoc )
-       RETURN
-    ENDIF
-    Input_Opt%plume_interval = v_real
+    !key   = "Plume_sources%Plume_injection%plume_interval"
+    !v_real = MISSING_REAL
+    !CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    !IF ( RC /= GC_SUCCESS ) THEN
+    !   errMsg = 'Error parsing ' // TRIM( key ) // '!'
+    !   CALL GC_Error( errMsg, RC, thisLoc )
+    !   RETURN
+    !ENDIF
+    !Input_Opt%plume_interval = v_real
     !------------------------------------------------------------------------
     ! Get number of x grid in 2d plume segment
     !------------------------------------------------------------------------
