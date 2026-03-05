@@ -805,16 +805,36 @@ PROGRAM GEOS_Chem
   ! Lagrange Module
   !===============================================
   ! unit is mol/mol dry
+  ! first convert mol/mol dry to kg/kg dry
+  CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = KG_SPECIES_PER_KG_DRY_AIR,                   &
+               previous_units = previous_units,                              &
+               RC             = RC                                          )
+  ! then convert kg/kg dry to molec/cm3, because no direct conversion from mol/mol to molec/cm3
   CALL Convert_Spc_Units(                                            &
                Input_Opt      = Input_Opt,                                   &
                State_Chm      = State_Chm,                                   &
                State_Grid     = State_Grid,                                  &
                State_Met      = State_Met,                                   &
                new_units      = MOLECULES_SPECIES_PER_CM3,                   &
-               previous_units = previous_units,                              &
+               previous_units = previous_units_temp,                              &
                RC             = RC                                          )
+  WRITE(6,'(a)') 'debug in main: before initialization, the new unit is ' // TRIM(UNIT_STR(previous_units))
+  WRITE(6,'(a)') 'debug in main: during initialization, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
   CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
-  
+  ! convert back from molec/cm3 to kg/kg dry
+  CALL Convert_Spc_Units(                                            &
+               Input_Opt  = Input_Opt,                                       &
+               State_Chm  = State_Chm,                                       &
+               State_Grid = State_Grid,                                      &
+               State_Met  = State_Met,                                       &
+               new_units  = previous_units_temp,                                  &
+               RC         = RC                                              )
+  ! convert back from kg/kg dry to v/ v dry
   CALL Convert_Spc_Units(                                            &
                Input_Opt  = Input_Opt,                                       &
                State_Chm  = State_Chm,                                       &
@@ -822,6 +842,7 @@ PROGRAM GEOS_Chem
                State_Met  = State_Met,                                       &
                new_units  = previous_units,                                  &
                RC         = RC                                              )
+  WRITE(6,'(a)') 'debug in main: after initialization, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
   ! Start a new outer loop
   DO
 
@@ -935,8 +956,8 @@ PROGRAM GEOS_Chem
                RC             = RC                                          )
 
        ENDIF
-       WRITE(6,'(a)') 'debug in main: before plume injection, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-       WRITE(6,'(a)') 'debug in main: before plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
+       !WRITE(6,'(a)') 'debug in main: before plume injection, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+       !WRITE(6,'(a)') 'debug in main: before plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
        ! At this time, previous unit should be mol/mol dry, and new unit should be kg/kg dry
        !===============================================
        ! Lagrange Module
@@ -952,6 +973,8 @@ PROGRAM GEOS_Chem
                new_units      = MOLECULES_SPECIES_PER_CM3,                   &
                previous_units = previous_units_temp,                              &
                RC             = RC                                          )
+       WRITE(6,'(a)') 'debug in main: Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
+       WRITE(6,'(a)') 'debug in main: During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
        CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
 	    CALL Convert_Spc_Units(                                            &
                Input_Opt      = Input_Opt,                                   &
@@ -961,8 +984,8 @@ PROGRAM GEOS_Chem
                new_units      = previous_units_temp,                   &
                RC             = RC                                          )
         WRITE(6,'(a)') 'debug in main: after plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-        WRITE(6,'(a)') 'debug in main: after plume injection, the previous temporary unit is ' // TRIM(UNIT_STR( previous_units_temp))
-        WRITE(6,'(a)') 'debug in main: after plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
+        !WRITE(6,'(a)') 'debug in main: after plume injection, the previous temporary unit is ' // TRIM(UNIT_STR( previous_units_temp))
+        !WRITE(6,'(a)') 'debug in main: after plume injection, the previous unit is ' // TRIM(UNIT_STR(previous_units))
         ! add temp variable to store previous_unit so it won't affect unit conversion later
        !=====================================================================
        !       ***** R U N   H E M C O   P H A S E   1 *****
