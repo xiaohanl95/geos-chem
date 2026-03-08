@@ -53,6 +53,7 @@ add_library(GeosCore
   linear_chem_mod.F90
   linoz_mod.F90
   lagrange_mod.F90
+  lagrange_singlebox_mod.F90
   mapping_mod.F90
   mercury_mod.F90
   mixing_mod.F90
@@ -64,6 +65,7 @@ add_library(GeosCore
   pjc_pfix_mod.F90
   pjc_pfix_window_mod.F90
   planeflight_mod.F90
+  plume_list_mod.F90
   pops_mod.F90
   RnPbBe_mod.F90
   rpmares_mod.F90

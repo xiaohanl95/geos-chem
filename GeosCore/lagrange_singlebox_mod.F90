@@ -1,0 +1,16 @@
+
+MODULE Lagrange_singlebox_Mod
+  USE Plume_list_Mod
+  USE PRECISION_MOD
+  USE ERROR_MOD
+  USE ERRCODE_MOD
+  USE PhysConstants,   ONLY : PI, Re, g0, AIRMW, AVO, BOLTZ
+  USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
+  USE UNITCONV_MOD    
+  USE INPUT_OPT_MOD,   ONLY : PlumeSource_t
+
+  IMPLICIT NONE
+  PRIVATE
+
+
+END MODULE Lagrange_singlebox_Mod
