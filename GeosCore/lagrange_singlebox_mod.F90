@@ -349,7 +349,7 @@ CONTAINS
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
     
     TYPE(SpcConc), POINTER        :: Spc(:)
-    TYPE(Plume2d_list), POINTER   :: Plume2d_new, Plume2d_curr, Plume2d_prev
+    TYPE(Plume2d_list), POINTER   :: Plume2d_new
 
     !REAL(fp), POINTER :: X_edge(:), Y_edge(:)
     !REAL(fp)          :: X_edge2, Y_edge2
@@ -665,7 +665,7 @@ CONTAINS
   real(fp), pointer      :: P_BXHEIGHT(:,:,:)
 
   TYPE(SpcConc), POINTER        :: Spc(:)
-  TYPE(Plume2d_list), POINTER :: Plume2d_new => NULL(), Plume2d_curr => NULL(), Plume2d_prev => NULL()
+  TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
   !TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d_curr, Plume1d_prev
 
 
@@ -696,7 +696,7 @@ CONTAINS
   ThisLoc                =   ' -> at plume_physics (in module GeosCore/lagrange_singlebox_mod.F90)'
   RC     =  GC_SUCCESS
   ErrMsg = ''
-
+  NULLIFY(Plume2d_new, Plume2d_curr, Plume2d_prev)
   !IF(Stop_inject==1) GOTO 400 ! deallocate and nullify -> exit
   
   ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species )) !
@@ -1306,9 +1306,10 @@ CONTAINS
 
     real(fp), dimension(:,:,:), allocatable :: box_concnt_2D
 
-    TYPE(Plume2d_list), POINTER :: Plume2d_new => NULL(), Plume2d_curr => NULL(), Plume2d_prev => NULL()
+    TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
 
     Spc                    =>   State_Chm%Species
+    NULLIFY(Plume2d_new, Plume2d_curr, Plume2d_prev)
     !ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species))
     ! dissolve 2D plume seg 
     ! lifetime larger than 1-Day
