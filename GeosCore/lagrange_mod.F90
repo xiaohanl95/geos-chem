@@ -266,7 +266,10 @@ CONTAINS
     Y_edge             =>             State_Grid%YEdge(1,:)
     P_edge             =>             State_Met%PEDGE(1,1,:) 
     X_edge2            =              X_edge(2)
-    Y_edge2            =              Y_edge(2)                  
+    Y_edge2            =              Y_edge(2)
+    X_mid              =>             State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! IIPAR ! new
+    Y_mid              =>             State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
+    P_mid              =>             State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)                  
     ! Copy all neccessary variable from geoschem.yml here
     use_lagrange        =             Input_Opt%LagrangianModel_Activate
     plume_inject_on     =             Input_Opt%PlumeInjection_Activate
@@ -371,8 +374,16 @@ CONTAINS
     Stop_inject = 0
 
     ! Check 2D domain grid
-    IF(MOD(n_x_max,9).ne.0) WRITE(6,*)"*** ERROR,  n_x_max should be divisible by 9 ***,"
-    IF(MOD(n_y_max,9).ne.0) WRITE(6,*)"*** ERROR,  n_y_max should be divisible by 9 ***"
+    IF(MOD(n_x_max,9).ne.0) THEN
+      ErrMsg = '*** ERROR,  n_x_max should be divisible by 9 ***'
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+      CALL ERROR_STOP (ErrMsg, ThisLoc)
+    ENDIF
+    IF(MOD(n_y_max,9).ne.0) THEN
+      ErrMsg = "*** ERROR,  n_y_max should be divisible by 9 ***"
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+      CALL ERROR_STOP (ErrMsg, ThisLoc)
+    ENDIF
 
     ! Check that species units are in  molec/cm3
     !id_SO2= Ind_('SO2')
@@ -382,7 +393,8 @@ CONTAINS
     ! Check that species units are in  molec/cm3
     IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
       ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
-      CALL GC_Error( ErrMsg, RC, ThisLoc )
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+       CALL ERROR_STOP (ErrMsg, ThisLoc)
     ENDIF
 
 !----------Output Files need to be organized--------------
@@ -648,7 +660,8 @@ CONTAINS
     ENDIF
     IF (plume_inject_on .AND. num_of_sources.lt.1) THEN
       ErrMsg = 'Plume injection is turned on but no source specified'
-      CALL GC_Error( ErrMsg, RC, ThisLoc )
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+      CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
     ENDIF
 
@@ -1361,8 +1374,7 @@ CONTAINS
 !      call cpu_time(finish)
 !      WRITE(6,*)'Time1 (finish-start) for 2D:', i_box, finish-start
 
-      ! Why not directly multiply the ratio 
-      !box_concnt_2D(:,:,:) = box_concnt_2D(:,:,:)*V_prev/V_new
+      
       
       DO i_species = 1, n_species, 1
       !$OMP PARALLEL DO           &
@@ -1810,11 +1822,12 @@ CONTAINS
 
   END SUBROUTINE lagrange_run
 
-!------------------------------------------------------------------
-! Get lattitude of injection at specific time step
-! This make sure plume seg created from lat1:dlat:lat2 -> lat2:-dlat,lat1 -> ...
-!------------------------------------------------------------------
 Real(fp) FUNCTION GetInjectionLat(lat1, lat2, plume_length, inject_num) 
+    !------------------------------------------------------------------
+    ! Get lattitude of injection at specific time step
+    ! This make sure plume seg created from lat1:dlat:lat2 -> lat2:-dlat,lat1 -> ...
+    !------------------------------------------------------------------
+
     implicit none
     REAL(fp), INTENT(IN) :: lat1, lat2
     !REAL(fp), INTENT(IN) :: plane_speed  !m/s
@@ -3208,7 +3221,7 @@ END FUNCTION GetInjectionLat
                                           !- D_mass_plume) /grid_volume
           background_mass     = State_Chm%Species(i_species)%Conc(i_lon,i_lat,i_lev) * grid_volume
           background_mass_new = background_mass - D_mass_plume
-          State_Chm%Species(i_advect)%Conc(i_lon,i_lat,i_lev) = background_mass_new / grid_volume
+          State_Chm%Species(i_species)%Conc(i_lon,i_lat,i_lev) = background_mass_new / grid_volume
 
         ENDDO ! DO i_species=1,n_species,1
 

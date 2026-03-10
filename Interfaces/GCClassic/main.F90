@@ -61,8 +61,8 @@ PROGRAM GEOS_Chem
   !---------------------------------------------------
   ! Lagrange module
   !---------------------------------------------------
-  USE Lagrange_Mod
-  
+  !USE Lagrange_Mod
+  USE Lagrange_Singlebox_Mod
   
   !--------------------------------------------------------------------------
   ! GEOS-Chem chemistry modules
@@ -825,7 +825,8 @@ PROGRAM GEOS_Chem
                RC             = RC                                          )
   WRITE(6,'(a)') 'debug in main: before initialization, the new unit is ' // TRIM(UNIT_STR(previous_units))
   WRITE(6,'(a)') 'debug in main: during initialization, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-  CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
+  !CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
+  CALL lagrange_init_box (am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
   ! convert back from molec/cm3 to kg/kg dry
   CALL Convert_Spc_Units(                                            &
                Input_Opt  = Input_Opt,                                       &
@@ -975,7 +976,9 @@ PROGRAM GEOS_Chem
                RC             = RC                                          )
        WRITE(6,'(a)') 'debug in main: Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
        WRITE(6,'(a)') 'debug in main: During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-       CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+       !CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+       CALL plume_inject_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+       CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
 	    CALL Convert_Spc_Units(                                            &
                Input_Opt      = Input_Opt,                                   &
                State_Chm      = State_Chm,                                   &
@@ -2091,8 +2094,8 @@ PROGRAM GEOS_Chem
   !===============================================
   ! Lagrange Module
   !===============================================
-  CALL lagrange_cleanup()
-  
+  !CALL lagrange_cleanup()
+  CALL plume_mod_cleanup_box()
   !==========================================================================
   !              ***** C L E A N U P   A N D   Q U I T *****
   !==========================================================================
