@@ -72,8 +72,8 @@ MODULE Lagrange_singlebox_Mod
   INTEGER :: id_SO2,  id_SO4,  id_OH,   id_O3,   id_NH3,   id_NH4,   id_H2O
   INTEGER :: id_NK01, id_SF01, id_AW01, id_H2SO4
 
-  TYPE(Plume2d_list), POINTER :: Plume2d_tail=> NULL(), Plume2d_head=> NULL()
-  TYPE(Plume1d_list), POINTER :: Plume1d_tail => NULL(), Plume1d_head => NULL()
+  TYPE(Plume2d_list), POINTER :: Plume2d_tail, Plume2d_head
+  TYPE(Plume1d_list), POINTER :: Plume1d_tail, Plume1d_head
 
   !-------------------------------------------------------------
   ! Some parameters to be retired 
@@ -108,6 +108,7 @@ CONTAINS
     INTEGER                       :: ii, jj, kk
     INTEGER                       :: id_tracer, N
     INTEGER                       :: i_lon, i_lat, i_lev            !1:IIPAR
+    INTEGER                       :: previous_units, previous_units_temp
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: FILENAME, FileEntropy, File996
     CHARACTER(LEN=255)            :: FILENAME2, FILENAME3
@@ -144,8 +145,6 @@ CONTAINS
     X_mid              =>             State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! IIPAR ! new
     Y_mid              =>             State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
     P_mid              =>             State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)
-
-
 
     ! Copy all neccessary variable from geoschem.yml here
     use_lagrange        =             Input_Opt%LagrangianModel_Activate
@@ -199,6 +198,7 @@ CONTAINS
     n_x_mid2                   =      (n_x_max2+1)/2 
     n_y_mid2                   =      (n_y_max2+1)/2
 
+    
     Dt = GET_TS_DYN()
     N_parcel = NINT(Aircraft_speed * Dt / Length_init)
     WRITE(6,*) 'Debug (BZ): Injected plume every time step: ', N_parcel
@@ -206,7 +206,7 @@ CONTAINS
 
     ! define how many plume segments will be injected
     ! -1 means keep inecting in the whole simulation
-    N_stop_inject = 2 ! N_total ! -1
+    N_stop_inject = -1 ! N_total ! -1
     Stop_inject = 0
 
     ! Check 2D domain grid
@@ -221,14 +221,9 @@ CONTAINS
       CALL ERROR_STOP (ErrMsg, ThisLoc)
     ENDIF
 
-    ! Check that species units are in  molec/cm3
-    id_SO4= Ind_('SO4')
-    IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
-      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
-      !CALL GC_Error( ErrMsg, RC, ThisLoc )
-       CALL ERROR_STOP (ErrMsg, ThisLoc)
-    ENDIF
-
+    NULLIFY(Plume2d_head)
+    NULLIFY(Plume2d_tail)
+    
     IF (.not.plume_inject_on) THEN
       WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip initialization'
       RETURN
@@ -241,85 +236,131 @@ CONTAINS
       RETURN
     ENDIF
 
+    ! Convert unit from mol/mol dry to kg/kg dry to molec/cm3
+    ! unit is mol/mol dry, first convert mol/mol dry to kg/kg dry
+    !CALL Convert_Spc_Units(                                            &
+    !            Input_Opt      = Input_Opt,                                   &
+    !            State_Chm      = State_Chm,                                   &
+    !            State_Grid     = State_Grid,                                  &
+    !            State_Met      = State_Met,                                   &
+    !            new_units      = KG_SPECIES_PER_KG_DRY_AIR,                   &
+    !            previous_units = previous_units,                              &
+    !            RC             = RC                                          )
+    ! then convert kg/kg dry to molec/cm3, because no direct conversion from mol/mol to molec/cm3
+    !CALL Convert_Spc_Units(                                            &
+    !            Input_Opt      = Input_Opt,                                   &
+    !            State_Chm      = State_Chm,                                   &
+    !            State_Grid     = State_Grid,                                  &
+    !            State_Met      = State_Met,                                   &
+    !            new_units      = MOLECULES_SPECIES_PER_CM3,                   &
+    !            previous_units = previous_units_temp,                              &
+    !            RC             = RC                                          )
+    !WRITE(6,'(a)') 'debug in plume_initialization: before initialization, the new unit is ' // TRIM(UNIT_STR(previous_units))
+    !WRITE(6,'(a)') 'debug in plume_initialization: during initialization, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(1)%Units))
+    ! Check that species units are in  molec/cm3
+    !id_SO4= Ind_('SO4')
+    !IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
+    !  ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+    !   CALL ERROR_STOP (ErrMsg, ThisLoc)
+    !ENDIF
     ! Read injection location at the first time step, always start from lat1
-    curr_lon    =  Plume_sources(1)%lon
-    curr_lat    =  Plume_sources(1)%lat1
-    curr_lev    =  Plume_sources(1)%lev
-    i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
-    if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-    if(i_lon<1) i_lon=i_lon+IIPAR
+    !curr_lon    =  Plume_sources(1)%lon
+    !curr_lat    =  Plume_sources(1)%lat1
+    !curr_lev    =  Plume_sources(1)%lev
+    !i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
+    !if(i_lon>IIPAR) i_lon=i_lon-IIPAR
+    !if(i_lon<1) i_lon=i_lon+IIPAR
     !WRITE(6,*) 'debug: ilon=', i_lon
-    i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
-    if(i_lat>JJPAR) i_lat=JJPAR
-    if(i_lat<1) i_lat=1
+    !i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
+    !if(i_lat>JJPAR) i_lat=JJPAR
+    !if(i_lat<1) i_lat=1
     !WRITE(6,*) 'debug: ilat=', i_lat
-    i_lev = Find_iPLev(curr_lev,P_edge)
+    !i_lev = Find_iPLev(curr_lev,P_edge)
     !WRITE(6,*) 'debug: ilev1=', i_lev
-    if(i_lev>LLPAR) i_lev=LLPAR
+    !if(i_lev>LLPAR) i_lev=LLPAR
 
-    IF (use_lagrange) THEN
-        ! Initialize the first plume segment
-      ALLOCATE(Plume2d_tail)
-      Plume2d_tail%IsNew = 1
-      Plume2d_tail%label = 1
+    !IF (use_lagrange) THEN
+      
+      !! Initialize the first plume segment
+      !ALLOCATE(Plume2d_tail)
+      !Plume2d_tail%IsNew = 1
+      !Plume2d_tail%label = 1
       !Plume2d_tail%active_x_min = 1
       !Plume2d_tail%active_x_max = n_x_max
       !Plume2d_tail%active_y_min = 1
       !Plume2d_tail%active_y_max = n_y_max
-      Plume2d_tail%lat_ind = i_lat
-      Plume2d_tail%lon_ind = i_lon
-      Plume2d_tail%lev_ind = i_lev
+      !Plume2d_tail%lat_ind = i_lat
+      !Plume2d_tail%lon_ind = i_lon
+      !Plume2d_tail%lev_ind = i_lev
 
       !Plume2d_tail%LON = Inject_lon
       !Plume2d_tail%LAT = -29.95e+0_fp
       !Plume2d_tail%LEV = Inject_hPa
-      Plume2d_tail%LON   = Plume_sources(1)%lon
-      Plume2d_tail%LAT   = Plume_sources(1)%lat1
-      Plume2d_tail%LEV   = Plume_sources(1)%lev
+      !Plume2d_tail%LON   = Plume_sources(1)%lon
+      !Plume2d_tail%LAT   = Plume_sources(1)%lat1
+      !Plume2d_tail%LEV   = Plume_sources(1)%lev
 
-      Plume2d_tail%ALPHA  = 0.0e+0_fp
-      Plume2d_tail%LIFE = 0.0e+0_fp
+      !Plume2d_tail%ALPHA  = 0.0e+0_fp
+      !Plume2d_tail%LIFE = 0.0e+0_fp
 
-      Plume2d_tail%LENGTH = Length_init ! m 
-      Plume2d_tail%PDX = Dx_init
-      Plume2d_tail%PDY = Dy_init
+      !Plume2d_tail%LENGTH = Length_init ! m 
+      !Plume2d_tail%PDX = Dx_init
+      !Plume2d_tail%PDY = Dy_init
       
-      ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species)) 
-      Plume2d_tail%CONCNT2d = 0.0e+0_fp ! molec/cm3
+      !ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species)) 
+      !Plume2d_tail%CONCNT2d = 0.0e+0_fp ! molec/cm3
       
       ! pass all species as from background as initial concentration
-      DO N = 1, n_species
-        Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
-      ENDDO
+      !DO N = 1, n_species
+      !  Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
+      !ENDDO
 
       ! add injected species to the center of plume grid
-      DO N = 1, num_of_sources
-        spc_name = Plume_sources(N)%species
-        id_tracer   = Ind_(spc_name)
-        Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
-                    + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-                    /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
+      !DO N = 1, num_of_sources
+      !  spc_name = Plume_sources(N)%species
+      !  id_tracer   = Ind_(spc_name)
+      !  Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
+      !              + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+      !              /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
                     
          !Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N)  &
          !           + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
          !           /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
-      ENDDO
-      NULLIFY(Plume2d_tail%next)
-      Plume2d_head => Plume2d_tail
-      Num_Plume2d = 1
-    ELSE
+      !ENDDO
+      !NULLIFY(Plume2d_tail%next)
+      !Plume2d_head => Plume2d_tail
+      !Num_Plume2d = 1
+    !ELSE
       ! add injected species into eulerian grid
-      WRITE(6,'(a)') ' lagrange module was turned off, add injected species to eulerian grid'
-      DO N = 1, num_of_sources
-        spc_name = Plume_sources(N)%species
-        id_tracer   = Ind_(spc_name)
-        Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
-                + (Length_init * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-                    /(State_Met%AIRVOL(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
-      ENDDO
-    ENDIF
-    Num_inject = 1
-    tt = 0
+      !WRITE(6,'(a)') ' lagrange module was turned off, add injected species to eulerian grid'
+      !DO N = 1, num_of_sources
+      !  spc_name = Plume_sources(N)%species
+      !  id_tracer   = Ind_(spc_name)
+      !  Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
+      !          + (Length_init * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
+      !              /(State_Met%AIRVOL(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
+      !ENDDO
+    !ENDIF
+    !Num_inject = 1
+    !tt = 0
+    ! convert back from molec/cm3 to kg/kg dry
+    !CALL Convert_Spc_Units(                                            &
+    !            Input_Opt  = Input_Opt,                                       &
+    !            State_Chm  = State_Chm,                                       &
+    !            State_Grid = State_Grid,                                      &
+    !            State_Met  = State_Met,                                       &
+    !            new_units  = previous_units_temp,                                  &
+    !            RC         = RC                                              )
+    ! convert back from kg/kg dry to v/ v dry
+    !CALL Convert_Spc_Units(                                            &
+    !            Input_Opt  = Input_Opt,                                       &
+    !            State_Chm  = State_Chm,                                       &
+    !            State_Grid = State_Grid,                                      &
+    !            State_Met  = State_Met,                                       &
+    !            new_units  = previous_units,                                  &
+    !            RC         = RC                                              )
+    !WRITE(6,'(a)') 'debug in plume_initialize: after initialization, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(1)%Units))
 90  FORMAT( /, A                 )
 95  FORMAT( A                    )
 100 FORMAT( A, L5                )
@@ -358,7 +399,7 @@ CONTAINS
     INTEGER                :: i_box, i_lon, i_lat, i_lev, i_species
     INTEGER                :: nAdv, i_advect1
     INTEGER                :: id_tracer, N
-    INTEGER                :: OrigUnit
+    INTEGER                :: previous_units, previous_units_temp
     REAL(fp)               :: box_lon, box_lat, box_lev
     REAL(fp), POINTER      :: PASV_EU
     REAL(fp)               :: MW_g
@@ -382,14 +423,8 @@ CONTAINS
     Dt                     =    GET_TS_DYN()
     Spc                    =>   State_Chm%Species
     ThisLoc                =   ' -> at plume_inject_box (in module GeosCore/lagrange_singlebox_mod.F90)'
-    
-    ! Check that species units are in  molec/cm3
+
     id_SO4= Ind_('SO4')
-    IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
-      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
-      !CALL GC_Error( ErrMsg, RC, ThisLoc )
-       CALL ERROR_STOP (ErrMsg, ThisLoc)
-    ENDIF
 
     IF (.NOT.plume_inject_on) THEN
       !WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip '
@@ -400,6 +435,25 @@ CONTAINS
       !CALL GC_Error( ErrMsg, RC, ThisLoc )
       !CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
+    ENDIF
+
+    ! In theory, before plume injection, the unit should be kg/kg
+    CALL Convert_Spc_Units(                                            &
+            Input_Opt      = Input_Opt,                                   &
+            State_Chm      = State_Chm,                                   &
+            State_Grid     = State_Grid,                                  &
+            State_Met      = State_Met,                                   &
+            new_units      = MOLECULES_SPECIES_PER_CM3,                   &
+            previous_units = previous_units_temp,                              &
+            RC             = RC                                          )
+    WRITE(6,'(a)') 'debug : Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
+    WRITE(6,'(a)') 'debug : During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+    
+    ! Check that species units are in  molec/cm3
+    IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
+      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
+      !CALL GC_Error( ErrMsg, RC, ThisLoc )
+       CALL ERROR_STOP (ErrMsg, ThisLoc)
     ENDIF
     ! -----------------------------------------------------------
     ! add new box every time step
@@ -479,16 +533,30 @@ CONTAINS
                                 
                 ENDDO
                 NULLIFY(Plume2d_new%next)
-                Plume2d_tail%next => Plume2d_new
-                Plume2d_tail => Plume2d_tail%next
+                IF ( .NOT. ASSOCIATED(Plume2d_head) ) THEN
+                  ! First node in the list
+                  Plume2d_head => Plume2d_new
+                  Plume2d_tail => Plume2d_new
+                ELSE
+                  ! Append to list
+                  Plume2d_tail%next => Plume2d_new
+                  Plume2d_tail => Plume2d_tail%next
+                ENDIF
+                Num_Plume2d = Num_Plume2d + 1
             ENDDO
-            Num_Plume2d = Num_Plume2d + N_parcel
             Num_inject = Num_inject + N_parcel
-
-            
         ENDIF
-
     ENDIF
+
+    CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = previous_units_temp,                   &
+               RC             = RC                                          )
+    WRITE(6,'(a)') 'debug: after plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+
   END SUBROUTINE plume_inject_box
 
   SUBROUTINE plume_model_box(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
@@ -507,6 +575,8 @@ CONTAINS
     TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
     TYPE(OptInput), INTENT(IN)    :: Input_Opt
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
+
+    INTEGER                :: previous_units, previous_units_temp
 
     REAL(fp)               :: Dt
 
@@ -527,14 +597,29 @@ CONTAINS
     Spc                    =>   State_Chm%Species
     ThisLoc                =   ' -> at plume_model_box (in module GeosCore/lagrange_singlebox_mod.F90)'
 
-    ! Check that species units are in  molec/cm3
     id_SO4= Ind_('SO4')
-    IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
-      ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
-      !CALL GC_Error( ErrMsg, RC, ThisLoc )
-       CALL ERROR_STOP (ErrMsg, ThisLoc)
-    ENDIF
+    
     IF (use_lagrange .AND. plume_inject_on) THEN
+
+      ! In theory, before plume injection, the unit should be kg/kg
+      CALL Convert_Spc_Units(                                            &
+              Input_Opt      = Input_Opt,                                   &
+              State_Chm      = State_Chm,                                   &
+              State_Grid     = State_Grid,                                  &
+              State_Met      = State_Met,                                   &
+              new_units      = MOLECULES_SPECIES_PER_CM3,                   &
+              previous_units = previous_units_temp,                              &
+              RC             = RC                                          )
+      WRITE(6,'(a)') 'debug : Before plume box model, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
+      WRITE(6,'(a)') 'debug : During plume box model, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+
+      ! Check that species units are in  molec/cm3
+      IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
+        ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
+        !CALL GC_Error( ErrMsg, RC, ThisLoc )
+        CALL ERROR_STOP (ErrMsg, ThisLoc)
+      ENDIF
+
       CALL plume_physics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
       ! Plume physical evolution: 
       ! Update plume lifetime 
@@ -554,10 +639,20 @@ CONTAINS
 
       ! write diagnostic output
       CALL lagrange_write_std( am_I_Root, RC )
+      ! convert unit back
+      CALL Convert_Spc_Units(                                            &
+               Input_Opt      = Input_Opt,                                   &
+               State_Chm      = State_Chm,                                   &
+               State_Grid     = State_Grid,                                  &
+               State_Met      = State_Met,                                   &
+               new_units      = previous_units_temp,                   &
+               RC             = RC                                          )
+      WRITE(6,'(a)') 'debug: after plume box model, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+
     ELSE
       RETURN
     ENDIF
-
+    
   END SUBROUTINE plume_model_box
   SUBROUTINE plume_mod_cleanup_box()
 
@@ -1271,7 +1366,25 @@ CONTAINS
   !IF(ASSOCIATED(Plume1d_prev)) nullify(Plume1d_prev)
 
   END SUBROUTINE plume_physics
+  SUBROUTINE plume_chem_microphysics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE State_Chm_Mod,   ONLY : ChmState, Ind_
+    USE State_Met_Mod,   ONLY : MetState
+    USE Species_Mod,     ONLY : SpcConc
+    USE TIME_MOD,        ONLY : GET_TS_DYN
+    USE State_Grid_Mod,  ONLY : GrdState
+    USE UnitConv_Mod
 
+    LOGICAL, INTENT(IN)           :: am_I_Root
+    TYPE(MetState), INTENT(IN)    :: State_Met
+    TYPE(ChmState), INTENT(INOUT) :: State_Chm
+    TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
+    TYPE(OptInput), INTENT(IN)    :: Input_Opt
+    INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
+
+    TYPE(SpcConc), POINTER        :: Spc(:)
+
+  END SUBROUTINE plume_chem_microphysics
   SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
     USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
@@ -1361,7 +1474,8 @@ CONTAINS
         ENDDO
 
         WRITE(6,*)'                '
-        WRITE(6,*)'*** Deleting the last Plume2d segment: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+        WRITE(6,*)'debug (BZ): grid_volume=', grid_volume, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
+		WRITE(6,*)'*** Deleting the last Plume2d segment: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
         WRITE(6,*)'                '
         IF (ASSOCIATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
         DEALLOCATE(Plume2d_curr)
@@ -1374,7 +1488,8 @@ CONTAINS
 
       ! delete the tail node 
       ELSEIF(.NOT.ASSOCIATED(Plume2d_curr%next))THEN 
-        WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+        WRITE(6,*)'debug (BZ): grid_volume=', grid_volume, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
+		WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
         ! Release mass in Plume2d_curr in Eulerian grid
         DO i_species = 1, n_species
           conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
@@ -1400,7 +1515,8 @@ CONTAINS
         Plume2d_head => Plume2d_curr%next
         !Plume2d_prev => Plume2d_curr%next
         ! Release mass in Plume2d_curr in Eulerian grid
-        WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+        WRITE(6,*)'debug (BZ): grid_volume=', grid_volume, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
+		WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
         DO i_species = 1, n_species
           conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
           mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
