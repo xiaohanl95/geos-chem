@@ -283,6 +283,7 @@ MODULE Input_Opt_Mod
      TYPE(PlumeSource_t), ALLOCATABLE :: Plume_sources(:)
      INTEGER                     :: PlumeGrid2d_nx
      INTEGER                     :: PlumeGrid2d_ny
+     INTEGER                     :: Num_of_injection
      REAL(fp)                    :: PlumeGrid2d_dx
      REAL(fp)                    :: PlumeGrid2d_dy
      REAL(fp)                    :: Initial_length
@@ -820,6 +821,7 @@ CONTAINS
     Input_Opt%Plume_sources_num        = 0
     Input_Opt%PlumeGrid2d_nx           = 0
     Input_Opt%PlumeGrid2d_ny           = 0
+    Input_Opt%Num_of_injection         = 0
     Input_Opt%Plume_sources_diag_dir   = ''
     Input_Opt%PlumeGrid2d_dx           = 0.0_fp
     Input_Opt%PlumeGrid2d_dy           = 0.0_fp

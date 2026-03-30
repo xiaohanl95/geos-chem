@@ -1627,16 +1627,8 @@ PROGRAM GEOS_Chem
              ErrMsg = 'Error encountered in "plume_inject_box"!'
              CALL Error_Stop( ErrMsg, ThisLoc )
           ENDIF
-          CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-          ! Trap potential errors
-          IF ( RC /= GC_SUCCESS ) THEN
-             ErrMsg = 'Error encountered in "plume_model_box"!'
-             CALL Error_Stop( ErrMsg, ThisLoc )
-          ENDIF
-          !==============================================================================================
-          ! Lagrange Module finished, added by BZ
-          !==============================================================================================
-
+          
+          
           IF ( ITS_TIME_FOR_CHEM() ) THEN 
              ! Do GEOS-Chem chemistry
              !WRITE(6,'(a)') 'before do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
@@ -1655,6 +1647,20 @@ PROGRAM GEOS_Chem
 
           IF ( Input_Opt%useTimers ) THEN
              CALL Timer_End( "All chemistry", RC )
+          ENDIF
+          WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
+          WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
+
+          !==============================================================================================
+          ! Lagrange Module, added by BZ
+          ! Unit conversion from kg/kg dry to molec/cm3 is moved inside the lagrange_mod
+          ! Run physics, chemistry inside the plume, dissolve plume and release species if condition met
+          !==============================================================================================
+          CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+          ! Trap potential errors
+          IF ( RC /= GC_SUCCESS ) THEN
+             ErrMsg = 'Error encountered in "plume_model_box"!'
+             CALL Error_Stop( ErrMsg, ThisLoc )
           ENDIF
        ENDIF
 

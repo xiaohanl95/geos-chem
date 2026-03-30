@@ -406,7 +406,8 @@ CONTAINS
           RETURN
        ENDIF
     ENDIF
-
+    
+         
     !### Debug
     IF ( Input_Opt%Verbose ) THEN
        CALL DEBUG_MSG( '### Do_FullChem: after computing J-values' )
@@ -514,7 +515,8 @@ CONTAINS
        ENDIF
     ENDIF
 #endif
-
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
     !========================================================================
     ! MAIN LOOP: Compute reaction rates and call chemical solver
     !
@@ -1549,6 +1551,8 @@ CONTAINS
     ENDDO
     ENDDO
     !$OMP END PARALLEL DO
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
 
     !=======================================================================
     ! Return gracefully if integration failed 2x anywhere

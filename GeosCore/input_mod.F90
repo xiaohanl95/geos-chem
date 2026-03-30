@@ -4015,6 +4015,18 @@ CONTAINS
     ENDIF
     Input_Opt%Aircraft_speed = v_real
     !------------------------------------------------------------------------
+    ! Get number of injection
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%Plume_injection%Num_of_injection"
+    v_int = MISSING_INT
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_int, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Num_of_injection = v_int
+    !------------------------------------------------------------------------
     ! Get plume_interval
     !------------------------------------------------------------------------
     !key   = "Plume_sources%Plume_injection%plume_interval"
@@ -4159,6 +4171,9 @@ CONTAINS
                         Input_Opt%PlumeInjection_Diag
        WRITE( 6, 110 ) 'Plume injection diagnostic path?    : ',             &
                         TRIM( Input_Opt%Plume_sources_diag_dir  )
+       WRITE( 6, 105 ) 'Number of injections     : ', Input_Opt%Num_of_injection
+       WRITE( 6, * )   'Plume initial_length (km): ', Input_Opt%initial_length
+       WRITE( 6, * )   'Aircraft Speed (m/s): ', Input_Opt%aircraft_speed
        WRITE( 6, 100 ) 'Turn on lagrangian model? : ',                       &
                         Input_Opt%LagrangianModel_Activate
        WRITE( 6, 100 ) 'Turn on tropospheric sink? : ',                      &
