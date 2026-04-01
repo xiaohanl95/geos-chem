@@ -6,6 +6,7 @@ MODULE Lagrange_singlebox_Mod
   USE ERRCODE_MOD
   USE PhysConstants,   ONLY : PI, Re, g0, AIRMW, AVO, BOLTZ
   USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
+  USE TIME_MOD,        ONLY : ITS_TIME_FOR_EXIT
   USE UNITCONV_MOD    
   USE INPUT_OPT_MOD,   ONLY : PlumeSource_t
 
@@ -193,12 +194,12 @@ CONTAINS
     Dx_init                    =      Input_Opt%PlumeGrid2d_dx
     Dy_init                    =      Input_Opt%PlumeGrid2d_dy
     ! Check n_x_max and n_y_max to be odd number and divisible by 9
-    IF((MOD(n_x_max,9).ne.0).or.(MOD(n_x_max,2).ne.0) ) THEN
+    IF((MOD(n_x_max,9).ne.0).or.(MOD(n_x_max,2).eq.0) ) THEN
       ErrMsg = '*** ERROR,  n_x_max should be an odd number and divisible by 9 ***'
       !CALL GC_Error( ErrMsg, RC, ThisLoc )
       CALL ERROR_STOP (ErrMsg, ThisLoc)
     ENDIF
-    IF((MOD(n_y_max,9).ne.0).or.(MOD(n_y_max,2).ne.0) ) THEN
+    IF((MOD(n_y_max,9).ne.0).or.(MOD(n_y_max,2).eq.0) ) THEN
       ErrMsg = '*** ERROR,  n_y_max should be an odd number and divisible by 9 ***'
       !CALL GC_Error( ErrMsg, RC, ThisLoc )
       CALL ERROR_STOP (ErrMsg, ThisLoc)
@@ -1384,6 +1385,12 @@ CONTAINS
     USE State_Grid_Mod,           ONLY : GrdState
     USE UnitConv_Mod
     ! KPP-related module
+#ifdef KPP_INTEGRATOR_AUTOREDUCE
+    USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_KeepHalogensActive
+    USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_SetKeepActive
+    USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_UpdateKppDiags
+    USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_SetIntegratorOptions
+#endif
     USE GcKpp_Global
     USE GcKpp_Parameters
     USE Gckpp_Monitor,            ONLY : SPC_NAMES, Eqn_Names, Fam_Names
@@ -1403,10 +1410,12 @@ CONTAINS
     
     
     INTEGER                       :: i_box, i_lon, i_lat, i_lev
-    INTEGER                       :: i_species, n_species, i_phot, i_kpp, i_rxn
+    INTEGER                       :: i_species, i_phot, i_kpp, i_rxn
     INTEGER                       :: i_x, i_y
+    INTEGER                       :: n_species 
     INTEGER                       :: Thread, IERR,  P, F, errorCount
     INTEGER                       :: SpcID, KppID
+    INTEGER                       :: RXN_O3_1, RXN_O3_2
     !INTEGER                       :: ind_SO2, ind_SO4, ind_OH
     
     INTEGER                       :: ISTATUS(20)
@@ -1431,7 +1440,7 @@ CONTAINS
     TYPE(Plume2d_list), POINTER :: Plume2d_next, Plume2d_curr, Plume2d_prev
     
     ! SAVEd scalars
-    !LOGICAL,  SAVE         :: FIRSTCHEM = .TRUE.
+    LOGICAL,  SAVE         :: FIRSTCHEM = .False.
 #ifdef MODEL_CLASSIC
 #ifndef NO_OMP
     INTEGER, EXTERNAL      :: OMP_GET_THREAD_NUM
@@ -1473,6 +1482,11 @@ CONTAINS
     id_SO2                = Ind_('SO2')
     id_SO4                = Ind_('SO4')
     id_OH                 = Ind_('OH')
+    ! RXN_O3_1 specifies: O3 + hv -> O2 + O
+    ! RXN_O3_2 specifies: O3 + hv -> O2 + O(1D)
+    ! (BZ): For debug purpose
+    RXN_O3_1              = State_Chm%Phot%RXN_O3_1
+    RXN_O3_2              = State_Chm%Phot%RXN_O3_2
     ! Noted that in GEOS-Chem, the default chemistry timestep is 20min, dynamic time step is 10min
     ! Here we implement chemsitry timestep using 10min
     Dt                     =    GET_TS_DYN()
@@ -1495,17 +1509,23 @@ CONTAINS
       ! Hard coded in GeosUtil/gc_grid_mod.F90
       ! IF ( .not. State_Met%InChemGrid(i_lon,i_lat,i_lev) ) CYCLE
       IF ( .not. State_Met%InChemGrid(i_lon,i_lat,i_lev) ) THEN
-        WRITE(6,*) 'Debug (BZ): Outside chem grid: (',i_lon, ', ', i_lat, ', ',i_lev,')'
+        WRITE(6,*) 'Debug (BZ): Outside chem grid: (i_box, i_lon, i_lat, i_lev): ',    &
+        Plume2d_curr%label, i_lon, i_lat, i_lev
         plume2d_curr => plume2d_curr%next
+        ! BZ: Maybe if plume reach out of chem grid, directly release species to Eulerian grid?
         CYCLE
       ENDIF
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO2 ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO4 ', Spc(id_SO4)%Conc(i_lon,i_lat,i_lev)
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of OH ', Spc(id_OH)%Conc(i_lon,i_lat,i_lev)
 
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave before Chem: Conc of SO2 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))/(n_x_max*n_y_max)
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave before Chem: Conc of SO4 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))/(n_x_max*n_y_max)
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave before Chem: Conc of OH ', SUM(Plume2d_curr%CONCNT2d(:,:,id_OH))/(n_x_max*n_y_max)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc before Chem: Conc of SO2 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))/(n_x_max*n_y_max)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc before Chem: Conc of SO4 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))/(n_x_max*n_y_max)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc before Chem: Conc of OH ', SUM(Plume2d_curr%CONCNT2d(:,:,id_OH))/(n_x_max*n_y_max)
+
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of SO2 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO2)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of SO4 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO4)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of OH ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_OH)
 
       ! Some species (counter or diagnostic species) needed to be zero out before solving KPP chemistry
       ! See details in Do_Chemistry in Fullchem_mod.F90
@@ -1537,13 +1557,11 @@ CONTAINS
         ! Free pointer
         SpcInfo => NULL()
       ENDDO
+
       !!! (BZ) Test output: Will Photolysis rate array be initalized every dynamic timestep?
       ! State_Chm%Phot%ZPJ(i_lev,n_photoRxn,i_lat,i_lon)
-      !DO i_species = 1, State_Chm%Phot%nMaxPhotRxns
-      !    WRITE(6,*) 'Debug: Plume number: ', i_box, '; PhotoRxn: ', i_species, '; rate: ', State_Chm%Phot%ZPJ(i_lev,i_species,i_lat,i_lon)
-      !ENDDO
-      WRITE(6,*) 'Debug (BZ): Do_Chemistry  (In plume): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
-      WRITE(6,*) 'Debug (BZ): Do_Chemistry  (In plume): PhotoRxn: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
+      WRITE(6,*) 'Debug (BZ): Do_Chemistry  (In plume): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
+      WRITE(6,*) 'Debug (BZ): Do_Chemistry  (In plume): PhotoRxn:  O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
 
       !========================================================================
       ! MAIN LOOP: Compute reaction rates and call chemical solver
@@ -1593,6 +1611,11 @@ CONTAINS
           Thread    = OMP_GET_THREAD_NUM() + 1 ! OpenMP thread number
 #endif
 #endif
+#ifdef KPP_INTEGRATOR_AUTOREDUCE
+       ! Per discussions for Lin et al., force keepActive throughout the
+       ! atmosphere if keepActive option is enabled. (hplin, 2/9/22)
+       CALL fullchem_AR_SetKeepActive( option=.TRUE. )
+#endif
           ! Get photolysis rates (daytime only)
           ! Update SUNCOSmid threshold from 0 to cos(98 degrees)
           ! Loop over the FAST-JX photolysis species
@@ -1638,7 +1661,7 @@ CONTAINS
           ENDIF
           
           ! Initialize the KPP "C" vector of species concentrations [molec/cm3]
-          DO i_species = 1, n_species
+          DO i_species = 1, NSPEC
             SpcID = State_Chm%Map_KppSpc(i_species)
             C(i_species)  = 0.0_dp
             IF ( SpcId > 0 ) C(i_species) =  Plume2d_curr%CONCNT2d(i_x,i_y,i_species)
@@ -1782,10 +1805,10 @@ CONTAINS
           ! Set options for the KPP integrator in vectors ICNTRL and RCNTRL
           ! This now needs to be done within the parallel loop
           !=====================================================================
-          !CALL fullchem_AR_SetIntegratorOptions( Input_Opt, State_Chm,          &
-          !                                       State_Met, FirstChem,          &
-          !                                       I,         J,         L,       &
-          !                                       ICNTRL,    RCNTRL             )
+          CALL fullchem_AR_SetIntegratorOptions( Input_Opt, State_Chm,          &
+                                                 State_Met, FirstChem,          &
+                                                 i_lon,    i_lat,  i_lev,       &
+                                                 ICNTRL,    RCNTRL             )
 #endif
           !=====================================================================
           ! Integrate the box forwards
@@ -1797,7 +1820,7 @@ CONTAINS
 
               ! Turn off error output after a certain limit is reached
               IF ( .not. doSuppress ) THEN
-                WRITE( 6, * ) '### INTEGRATE RETURNED ERROR AT: ', i_x, i_y, i_box
+                WRITE( 6, * ) '### INTEGRATE RETURNED ERROR AT: ', i_x, i_y, Plume2d_curr%label
                 errorCount = errorCount + 1
                 IF ( errorCount > INTEGRATE_FAIL_TOGGLE ) THEN
                     WRITE( 6, '(a)' ) &
@@ -1851,7 +1874,7 @@ CONTAINS
              ! Print concentrations at failure grid box
              PRINT*, REPEAT( '#', 79 )
              PRINT*, '### KPP DEBUG OUTPUT!'
-             PRINT*, '### Species concentrations at problem box ',i_lon, i_lat, i_box
+             PRINT*, '### Species concentrations at problem box ',i_lon, i_lat, Plume2d_curr%label
              PRINT*, REPEAT( '#', 79 )
              DO i_species = 1, n_species
                 PRINT*, C(i_species), TRIM( ADJUSTL( SPC_NAMES(i_species) ) )
@@ -1860,7 +1883,7 @@ CONTAINS
              ! Print rate constants at failure grid box
              PRINT*, REPEAT( '#', 79 )
              PRINT*, '### KPP DEBUG OUTPUT!'
-             PRINT*, '### Reaction rates at problem box ', i_lon, i_lat, i_box
+             PRINT*, '### Reaction rates at problem box ', i_lon, i_lat, Plume2d_curr%label
              PRINT*, REPEAT( '#', 79 )
              DO i_rxn = 1, NREACT
                 PRINT*, RCONST(i_rxn), TRIM( ADJUSTL( EQN_NAMES(i_rxn) ) )
@@ -1876,11 +1899,11 @@ CONTAINS
 
           !=====================================================================
           ! Check we have no negative values and copy the concentrations
-          ! calculated from the C array back into State_Chm%Species%Conc
+          ! calculated from the C array back into Plume conc array
           !=====================================================================
 
           ! Loop over KPP species
-          DO i_species = 1, n_species
+          DO i_species = 1, NSPEC
 
               ! GEOS-Chem species ID
               SpcID = State_Chm%Map_KppSpc(i_species)
@@ -1900,10 +1923,23 @@ CONTAINS
         ENDDO
       ENDDO
       !$OMP END PARALLEL DO
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave after Chem: Conc of SO2 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))/(n_x_max*n_y_max)
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave after Chem: Conc of SO4 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))/(n_x_max*n_y_max)
-      WRITE(6,*) 'Debug (BZ): Plume box: ',i_box,' ave after Chem: Conc of OH ', SUM(Plume2d_curr%CONCNT2d(:,:,id_OH))/(n_x_max*n_y_max)
+      
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc after Chem: Conc of SO2 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))/(n_x_max*n_y_max)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc after Chem: Conc of SO4 ', SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))/(n_x_max*n_y_max)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' ave conc after Chem: Conc of OH ', SUM(Plume2d_curr%CONCNT2d(:,:,id_OH))/(n_x_max*n_y_max)
 
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of SO2 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO2)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of SO4 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO4)
+      WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of OH ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_OH)
+      !=======================================================================
+      ! Return gracefully if integration failed 2x anywhere
+      ! (as we cannot break out of a parallel DO loop!)
+      !=======================================================================
+      IF ( Failed2x ) THEN
+        ErrMsg = 'KPP failed to converge after 2 iterations!'
+        CALL GC_Error( ErrMsg, RC, ThisLoc )
+        RETURN
+      ENDIF
       Plume2d_curr => Plume2d_curr%next
     ENDDO
     
@@ -1989,8 +2025,9 @@ CONTAINS
       V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp
       ! --------------------------------------------------------------------
       ! delete the node for 2D plume (current criteria: plume lifetime > 1days)
+      ! At the end of simulation, automatically dissolve all plumes
       ! --------------------------------------------------------------------
-      IF((box_life .GT. 1.0*24.0*60.0*60)) THEN
+      IF((box_life .GT. 1.0*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
     
       ! delete the only node
       IF(.NOT.ASSOCIATED(Plume2d_curr%next) .AND. &

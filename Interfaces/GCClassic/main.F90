@@ -1648,8 +1648,8 @@ PROGRAM GEOS_Chem
           IF ( Input_Opt%useTimers ) THEN
              CALL Timer_End( "All chemistry", RC )
           ENDIF
-          WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
-          WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
+          !WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
+          !WRITE(6,*) 'Debug (BZ): In Main  (After do chemistry: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
 
           !==============================================================================================
           ! Lagrange Module, added by BZ

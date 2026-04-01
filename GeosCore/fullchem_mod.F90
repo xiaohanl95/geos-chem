@@ -179,6 +179,8 @@ CONTAINS
     INTEGER                :: P,          MONTH,     YEAR,     Day
     INTEGER                :: IERR,       S,         Thread
     INTEGER                :: errorCount, previous_units
+    ! Debug (BZ)
+    INTEGER                :: RXN_O3_1, RXN_O3_2
     REAL(fp)               :: SO4_FRAC,   SR,        LWC
     REAL(dp)               :: KPPH_before_integrate
     ! Strings
@@ -262,7 +264,11 @@ CONTAINS
     errorCount =  0
     Failed2x   = .FALSE.
     doSuppress = .FALSE.
-
+    ! Debug (BZ)
+    ! RXN_O3_1 specifies: O3 + hv -> O2 + O
+    ! RXN_O3_2 specifies: O3 + hv -> O2 + O(1D)
+    RXN_O3_1              = State_Chm%Phot%RXN_O3_1
+    RXN_O3_2              = State_Chm%Phot%RXN_O3_2
     ! Print information the first time that DO_FULLCHEM is called
     CALL PrintFirstTimeInfo( Input_Opt, State_Chm, FirstChem )
 
@@ -515,8 +521,8 @@ CONTAINS
        ENDIF
     ENDIF
 #endif
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
     !========================================================================
     ! MAIN LOOP: Compute reaction rates and call chemical solver
     !
@@ -1551,8 +1557,8 @@ CONTAINS
     ENDDO
     ENDDO
     !$OMP END PARALLEL DO
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: ', 99, '; rate: ', State_Chm%Phot%ZPJ(39,99,23,40)
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: ', 100, '; rate: ', State_Chm%Phot%ZPJ(39,100,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
+    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn:  O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
 
     !=======================================================================
     ! Return gracefully if integration failed 2x anywhere
