@@ -230,7 +230,7 @@ CONTAINS
 
     IF (plume_inject_on .AND. num_of_sources.lt.1) THEN
       ErrMsg = 'Plume injection is turned on but no source specified, skip initialization'
-      CALL GC_Error( ErrMsg, RC, ThisLoc )
+      CALL GC_Warning( ErrMsg, RC, ThisLoc )
       !CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
     ENDIF
@@ -467,7 +467,7 @@ CONTAINS
         IF (.NOT. use_lagrange) THEN
             DO i_box = Num_inject+1, Num_Stop, 1
                 
-              IF (i_box .GT. N_stop_inject) EXIT 
+              !IF (i_box .GT. N_stop_inject) EXIT 
                 
                 box_lon    = Plume_sources(1)%lon
                 box_lat    = GetInjectionLat(Plume_sources(1)%lat1,Plume_sources(1)%lat2, Length_init, i_box - 1)
@@ -488,10 +488,13 @@ CONTAINS
                 ! instantly add injected species into Eulerian grid 
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
-                    id_tracer   = Ind_(spc_name)
+                    id_tracer   = Ind_(TRIM(spc_name))
+                    write(6,*) 'debug (BZ): species: ', TRIM(spc_name), 'id: ', id_tracer, 'conc before injection: ', Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
                     Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
                             + (Length_init * Plume_sources(i_species)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
                             /(State_Met%AIRVOL(i_lon, i_lat, i_lev) * 1.0e+6_fp) ! molec/cm3
+                    write(6,*) 'debug (BZ): species: ', spc_name, 'id: ', id_tracer, 'conc after injection: ', Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
+
                 ENDDO
             ENDDO
             Num_inject = Num_Stop 
@@ -534,7 +537,7 @@ CONTAINS
                 ! add tracer concentration
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
-                    id_tracer   = Ind_(spc_name)
+                    id_tracer   = Ind_(TRIM(spc_name))
                     Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_new%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
                                 + (Plume2d_new%LENGTH * Plume_sources(i_species)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
                                 /(Plume2d_new%PDX * Plume2d_new%PDY *Plume2d_new%LENGTH*1.E6_fp ) ! molec/cm3
@@ -635,6 +638,11 @@ CONTAINS
       ! Update in-plume concentration due to volume change 
       ! In-plume species concentration: 
       ! advection, diffusion; entrainment
+
+      ! BZ: See Chemistry_mod.F90
+      ! Before Chemistry, do I need to set CO2 to 421ppm?This is set for Eulerian grid before chemistry
+      ! This is necessary to reduce the error norm in KPP.
+      ! See https://github.com/geoschem/geos-chem/issues/1529.
 
       CALL plume_chem_microphysics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
       ! New module update chemistry and microphysics
@@ -1428,7 +1436,9 @@ CONTAINS
     REAL(dp)                      :: RSTATE (20)
     REAL(dp)                      :: C_before_integrate(NSPEC)
     REAL(dp)                      :: local_RCONST(NREACT)
-
+    REAL(fp)                      :: H2SO4_RATE_2d(n_x_max,n_y_max) ! H2SO4 prod rate [kg s-1]
+    REAL(fp)                      :: PSO4AQ_RATE_2d(n_x_max,n_y_max) ! Cld chem sulfate prod rate [kg s-1]
+    
     LOGICAL                       :: Failed2x,  Size_Res, doSuppress
 
     CHARACTER(LEN=255)            :: ErrMsg
@@ -1462,6 +1472,19 @@ CONTAINS
     !========================================================================
     ! plume_chem_microphysics begins here!
     ! Mainly adapted from GEOS-Chem fullchem_mod.F90
+    ! Currently only solve KPP-related gas phase chemistry
+    ! Currently not consider other processes listed in chemistry_mod.F90, including:
+    ! 1) UCX: Calc_Strat_Aer
+    ! No solid particle formation inside, liquid fraction taken from Eulerian grid process
+    ! 2) Aerosol_Mod: Aerosol_Conc, RdAer
+    ! 3) Dust_Mod: RDust_Online (Dust OD)
+    ! aerosol AOD related calculation
+    ! aerosol surface area for heteorogenous chem
+    ! 4) ChemSulfate -> chem_SO2:
+    ! In-cloud chemistry and cloud pH 
+    ! e.g., sulfate loss by H2O2, O3, HOBr, HCHO,...
+    ! 5) photolysis rate modification 
+    ! all taken from Eulerian grid process diagnostic
     !========================================================================
 
     ! Initialization
@@ -1477,11 +1500,13 @@ CONTAINS
     n_species              =    State_Chm%nSpecies
     Thread                 =    1
     errorCount             =    0
-    Failed2x               = .FALSE.
-    doSuppress             = .FALSE.
-    id_SO2                = Ind_('SO2')
-    id_SO4                = Ind_('SO4')
-    id_OH                 = Ind_('OH')
+    Failed2x               =   .FALSE.
+    doSuppress             =   .FALSE.
+    id_SO2                 =    Ind_('SO2')
+    id_SO4                 =    Ind_('SO4')
+    id_OH                  =    Ind_('OH')
+    H2SO4_RATE_2d          =    0.0d0
+    PSO4AQ_RATE_2d         =    0.0d0
     ! RXN_O3_1 specifies: O3 + hv -> O2 + O
     ! RXN_O3_2 specifies: O3 + hv -> O2 + O(1D)
     ! (BZ): For debug purpose
@@ -1919,7 +1944,47 @@ CONTAINS
                Plume2d_curr%CONCNT2d(i_x,i_y,i_species) = REAL( C(i_species), kind=fp )
 
           ENDDO
+#ifdef TOMAS
+              !-----------------------------------------------------------------
+              ! FOR TOMAS MICROPHYSICS:
+              !
+              ! Obtain P/L with a unit [kg S] for tracing
+              ! gas-phase sulfur species production (SO2, SO4, MSA)
+              ! (win, 8/4/09)
+              !
+              ! TODO: Abstract this to a subroutine, to simplify DO_FULLCHEM
+              !-----------------------------------------------------------------
+              ! Calculate H2SO4 production rate [kg s-1] in each
+              ! time step (win, 8/4/09)
+              H2SO4_RATE_2d(i_x, i_y)= C(ind_PH2SO4) / AVO * 98.e-3_fp * &
+                           State_Met%AIRVOL(i_lon,i_lat,i_lev)    * &
+                           1.0e+6_fp / DT  ! kg s-1 box-1
+        
+              IF ( H2SO4_RATE_2d(i_x, i_y) < 0.0d0) THEN
+                ErrMsg = "H2SO4_RATE_2D negative in (Plumeid, x, y):", &
+                    Plume2d_curr%label, i_x, i_y, "was:", H2SO4_RATE_2d(i_x, i_y), "  setting to 0.0d0"
+                CALL GC_Warning( ErrMsg, RC, ThisLoc )
+                H2SO4_RATE_2d(i_x, i_y) = 0.0d0
+              ENDIF
 
+              PSO4AQ_RATE_2d(i_x, i_y) = C(ind_PSO4AQ) / AVO * 98.e-3_fp * &
+                            State_Met%AIRVOL(i_lon,i_lat,i_lev)    * &
+                            1.0e+6_fp ! kg per timestep box-1
+
+              IF ( PSO4AQ_RATE_2d(i_x, i_y) < 0.0d0) THEN
+                ErrMsg = "PSO4AQ_RATE_2D negative in (Plumeid, x, y):", &
+                    Plume2d_curr%label, i_x, i_y, "was:", PSO4AQ_RATE_2d(i_x, i_y), "  setting to 0.0d0"
+                
+                CALL GC_Warning( ErrMsg, RC, ThisLoc )
+                PSO4AQ_RATE_2d(i_x, i_y) = 0.0d0
+              ENDIF
+#endif
+              !====================================================================
+              ! Archieve KPP diagnostic output and write diagnostics files
+              ! e.g., Chemical production and loss
+              ! OH reactivity: inverse of its life-time
+              ! GcKpp_Util -> Get_OHreactivity
+              !====================================================================
         ENDDO
       ENDDO
       !$OMP END PARALLEL DO
@@ -1940,9 +2005,76 @@ CONTAINS
         CALL GC_Error( ErrMsg, RC, ThisLoc )
         RETURN
       ENDIF
+#ifdef TOMAS
+      !-----------------------------------------------------------------
+      ! TOMAS microphysics:
+      ! [Currently not consider]: additional process: in-cloud oxidation: 
+      ! SO4 production from aqueous chemistry of SO2 >> PSO4AQ_RATE_2d 
+      ! Distributed onto size-resolved aerosol num and sulfate mass >> 
+      !    fullchem_mod -> TOMAS_SO4_AQ >> TOMAS_MOD -> AQOXID
+      !-----------------------------------------------------------------
+       
+#endif
+      !-----------------------------------------------------------------
+      ! [Currently not considered]: Sea salt chemistry: ChemSeaSalt <<SEASALT_MOD
+      ! - SALA, SALACL, SALAAL wet settling
+      ! - SALC, SALCCL, SALCAL wet settling
+      ! - Marine organic aerosol MOPO-> MOPI, e-folding time 1.15 days: CHEM_MOPO AND CHEM_MOPI <<SEASALT_MOD
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! [Currently not considered]: Recalculate PSC properties: Calc_Strat_Aer<< UCX_MOD
+      ! In non PSC formation regime, calculate liquid phase aerosol (SLA)
+      ! Based on partitioning of total SO4 as H2SO4, 
+      ! CALL TERNARY( PCENTER,TCENTER,H2OSUM,H2SO4_BOX_L, &
+		  !			   0.e+0_fp   ,HClSUM,HOClSUM,HBrSUM,HOBrSUM, &
+			!		   W_H2SO4,W_H2O,W_HNO3,W_HCl,W_HOCl,W_HBr,W_HOBr, &
+			!		   HNO3GASFRAC,HClGASFRAC,HOClGASFRAC, &
+			!		   HBrGASFRAC,HOBrGASFRAC,VOL_SLA,RHO_AER_BOX)
+      !-----------------------------------------------------------------
+
+
+      !-----------------------------------------------------------------
+      ! [Currently not considered]: sulfate chemistry: ChemSulfate << SULFATE_MOD
+      ! SO4s [kg] gravitational settling
+      ! NITs [kg] gravitational settling
+      ! Stratospheric aerosol gravitational settling: SETTLE_STRAT_AER << UCX
+      !    - Settling SLAs
+      !      - change concentration of SLAs including: SO4, HNO3, HCl, HOCl, HBr, HOBr, H2O, 
+      !      - Settle some BCPI
+      !    - Settling SPAs
+      !      - NIT, H2O, and aerosol mass
+      ! SO2 chemistry: CHEM_SO2 << sulfate_mod
+      !    - SO2 production:
+      !      - DMS + OH, DMS + NO3 (saved in CHEM_DMS)
+      !      - HMS -> SO2 + HCHO (aq)
+      !    - SO2 loss:
+      !      - SO2 + OH  -> SO4 [This is for aerosol-only simulation, otherwise is included in KPP]
+      !      - SO2       -> drydep [This is done in mixing_mod.F90]
+      !      - Sea salt alkalinity and sea salt-sulfate reaction [Not included in KPP]
+      !           condition: alkalinity>0, SO2 present and excess O3 present
+      !      - Acid uptake on dust particles: 
+      !           condition: Alkalinity >0, SO2 present, and O3 excess
+      !      - SO2 in cloud chemistry (with cloud, with SO2, and T>-15 C, with LWC)
+      !      - Metal catalyzed oxidation of SO2 pathway (on dust)
+      !      - SO2 loss by H2O2 (not included in KPP)
+      !      - SO2 loss by O3 (not included in KPP) 
+      !           - Pathway 1: L3S incloud liquid phase?
+      !           - Pathway 2: L3S_1 in cloud solid phase?          
+      !      - SO2 loss by HOBr (not included in KPP)
+      !      - SO2 + HCHO (aq)-> HMS
+      !      - SO2 + HMS -> 2 SO4
+      !    - SO2 = SO2_0 * exp(-bt) +  PSO2_DMS/bt * [1-exp(-bt)]
+      !-----------------------------------------------------------------
+
+      !-----------------------------------------------------------------
+      ! [Currently not considered]: sulfate chemistry: ChemCarbon << CARBON_MOD
+      ! BCPO/ECOB -> BCPI/ECIL and OCPO/OCOB -> OCPI/OCIL:   e-folding time 1.15 days
+      ! SOAP -> SOAS, for TOMAS: SOA condensation (COACOND << TOMAS_MOD)
+      ! SOA chemistry SOA_CHEMISTRY << CARBON_MOD
       Plume2d_curr => Plume2d_curr%next
     ENDDO
-    
+  
   END SUBROUTINE plume_chem_microphysics
 
   SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
