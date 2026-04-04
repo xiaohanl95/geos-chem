@@ -147,6 +147,8 @@ CONTAINS
     USE TOMAS_MOD,                ONLY : H2SO4_RATE
     USE TOMAS_MOD,                ONLY : PSO4AQ_RATE
 #endif
+   ! BZ: save reaction rate for Plume chemistry
+   USE Lagrange_Singlebox_Mod,     ONLY  : RXNRATE_CONST_KPP
 !
 ! !INPUT PARAMETERS:
 !
@@ -526,21 +528,21 @@ CONTAINS
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
     ! Debug: BZ
-    Flag_Prev = State_Diag%Archive_RxnConst
-    State_Diag%Archive_RxnConst = .True.
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry, Print Flag_Pre, ', Flag_Prev, 'Flag_Curr, ', State_Diag%Archive_RxnConst
-    Write (6, *) "Debug: (BZ): Do_Chemistry  (Before main loop): rate constant for RXN 202 = ", &
-        State_Diag%RxnConst(23, 40, 39 ,202)
+    !Flag_Prev = State_Diag%Archive_RxnConst
+    !State_Diag%Archive_RxnConst = .True.
+    ! WRITE(6,*) 'Debug (BZ): Do_Chemistry, Print Flag_Pre, ', Flag_Prev, 'Flag_Curr, ', State_Diag%Archive_RxnConst
+    !Write (6, *) "Debug: (BZ): Do_Chemistry  (Before main loop): rate constant for RXN 202 = ", &
+    !    State_Diag%RxnConst(23, 40, 39 ,202)
     ! Debug, BZ
-    IF ( State_Diag%Archive_RxnConst ) THEN
+    !IF ( State_Diag%Archive_RxnConst ) THEN
 
-          DO S = 1, State_Diag%Map_RxnConst%nSlots
-             N = State_Diag%Map_RxnConst%slot2Id(S)
-             WRITE( 6, *) "Debug (BZ):, N =", N, "S = ", S
-             !State_Diag%RxnConst(I,J,L,S) = RCONST(N)
-          ENDDO
+     !     DO S = 1, State_Diag%Map_RxnConst%nSlots
+     !        N = State_Diag%Map_RxnConst%slot2Id(S)
+     !        WRITE( 6, *) "Debug (BZ):, N =", N, "S = ", S
+     !        !State_Diag%RxnConst(I,J,L,S) = RCONST(N)
+     !     ENDDO
 
-       ENDIF
+      ! ENDIF
     !========================================================================
     ! MAIN LOOP: Compute reaction rates and call chemical solver
     !
@@ -977,7 +979,8 @@ CONTAINS
 
        ! Update the array of rate constants
        CALL Update_RCONST()
-
+       ! BZ, store RCONSTANT FOR the use in Plume Chem
+       RXNRATE_CONST_KPP (I, J, L, :) = RCONST
        !=====================================================================
        ! HISTORY (aka netCDF diagnostics)
        !
@@ -1576,13 +1579,13 @@ CONTAINS
     ENDDO
     ENDDO
     !$OMP END PARALLEL DO
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn:  O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
+    ! WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
+    ! WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn:  O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
     ! Debug: BZ
     ! Flag_Prev = State_Diag%Archive_RxnConst
-    State_Diag%Archive_RxnConst = Flag_Prev
-    Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): rate constant for RXN 202 = ", &
-        State_Diag%RxnConst(23, 40, 39 ,202)
+    ! State_Diag%Archive_RxnConst = Flag_Prev
+     Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): rate constant for RXN 202 = ", &
+        RXNRATE_CONST_KPP(23, 40, 39 ,202)
     !=======================================================================
     ! Return gracefully if integration failed 2x anywhere
     ! (as we cannot break out of a parallel DO loop!)

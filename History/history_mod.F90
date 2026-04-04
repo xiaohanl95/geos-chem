@@ -3242,7 +3242,7 @@ CONTAINS
     ! not skip collections that we have already encountered.  But it
     ! only gets done during the init phase, so it might not be a huge
     ! expenditure of time anyway.  Worry about this later. (bmy, 1/18/18)
-    WRITE(*,*) '(BZ): CollectionCount = ', CollectionCount
+    ! WRITE(*,*) '(BZ): CollectionCount = ', CollectionCount
     DO C = 1, CollectionCount
 
        ! Check to see if the current line matches the collection name

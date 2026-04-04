@@ -28,6 +28,7 @@ MODULE Lagrange_singlebox_Mod
   USE TIME_MOD,        ONLY : ITS_TIME_FOR_EXIT
   USE UNITCONV_MOD    
   USE INPUT_OPT_MOD,   ONLY : PlumeSource_t
+  USE gckpp_Parameters, ONLY: NREACT
 
   IMPLICIT NONE
   PRIVATE
@@ -39,6 +40,7 @@ MODULE Lagrange_singlebox_Mod
   PUBLIC :: plume_mod_cleanup_box
 
   ! PUBLIC VARIABLES:
+  PUBLIC :: RXNRATE_CONST_KPP
   !PUBLIC :: n_x_max, n_y_max
 
   ! variables read from geoschem_config.yml
@@ -55,7 +57,7 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp)                              :: Dy_init
   REAL(fp)                              :: Length_init    ! m
   REAL(fp)                              :: Aircraft_speed ! m/s
-
+  REAL(fp), ALLOCATABLE                 :: RXNRATE_CONST_KPP(:,:,:,:)
   ! Other variables
   INTEGER               :: n_species
   INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
@@ -166,6 +168,15 @@ CONTAINS
     X_mid              =>             State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! IIPAR ! new
     Y_mid              =>             State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
     P_mid              =>             State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)
+    
+    Write (6, *) "Debug: (BZ) Num of reactions from KPP is: ", NREACT
+
+    ALLOCATE( RXNRATE_CONST_KPP(IIPAR, JJPAR, LLPAR, NREACT ), STAT=RC )
+    IF (RC /= 0) THEN
+        errMsg = 'Error allocating RXNRATE_CONST_KPP'
+        CALL ERROR_STOP( errMsg, thisLoc)
+        RETURN
+    ENDIF
 
     ! Copy all neccessary variable from geoschem.yml here
     use_lagrange        =             Input_Opt%LagrangianModel_Activate
@@ -698,14 +709,25 @@ CONTAINS
     
   END SUBROUTINE plume_model_box
   
-  SUBROUTINE plume_mod_cleanup_box()
+  SUBROUTINE plume_mod_cleanup_box( RC)
 
+     USE ErrCode_Mod
+
+    INTEGER, INTENT(OUT) :: RC          ! Success or failure?
+
+     ! Initialize
+    RC = GC_SUCCESS
 
     IF ((.NOT.plume_inject_on).OR.(.NOT.use_lagrange)) THEN
       WRITE(6,'(a)') ' No plume injection / no lagrangian module configuration, skip cleanup'
       RETURN
     ENDIF
 
+    IF ( ALLOCATED(RXNRATE_CONST_KPP))  THEN
+          DEALLOCATE(RXNRATE_CONST_KPP, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:RXNRATE_CONST_KPP', 2, RC )
+          IF ( RC /= GC_SUCCESS ) RETURN
+    ENDIF
 
 !
 !    if (allocated(box_lon))      deallocate(box_lon)
@@ -1612,8 +1634,8 @@ CONTAINS
 
     ! IF (State_Diag%Archive_RxnConst        ) Write(6, *) "Debug: (BZ) ; Archive_RxnRate", State_Diag%Archive_RxnRate
     ! For debug process, print rate constant 202: SO2 + OH {+M} = SO4 + HO2 + PH2SO4 :
-    ! Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN 202 = ", &
-    !   State_Diag%RxnConst(23, 40, 39 ,202)
+    Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN 202 = ", &
+      RXNRATE_CONST_KPP(23, 40, 39 ,202)
     DO WHILE(ASSOCIATED(Plume2d_curr))
       i_box = i_box+1
       i_lon         = Plume2d_curr%lon_ind
