@@ -1633,13 +1633,13 @@ PROGRAM GEOS_Chem
              ! Do GEOS-Chem chemistry
              !WRITE(6,'(a)') 'before do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
              WRITE(6,'(a)') 'Debug: (BZ): Main: Before Do_Chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
-             ! Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : rate constant for RXN 202 = ", &
-             !           State_Diag%RxnConst(23, 40, 39 ,202)
+             Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : rate constant for RXN 202 = ", &
+                        State_Diag%RxnConst(23, 40, 39 ,202)
              CALL Do_Chemistry( Input_Opt,  State_Chm, State_Diag, &
                                 State_Grid, State_Met, RC )
              WRITE(6,'(a)') 'Debug: (BZ): After do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-             !Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : rate constant for RXN 202 = ", &
-             !            State_Diag%RxnConst(23, 40, 39 ,202)
+             Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : rate constant for RXN 202 = ", &
+                         State_Diag%RxnConst(23, 40, 39 ,202)
     
              ! WRITE(6,'(a)') 'Debug: (BZ):after do chemistry: rate: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
     

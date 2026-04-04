@@ -779,7 +779,7 @@ CONTAINS
        ! and keep track of the line number for error output
  500   CONTINUE
        Line    = ReadOneLine( fId, EOF, IOS, Squeeze=.TRUE. )
-       WRITE(*,*) '(BZ): DEBUG Line = ', TRIM(Line)
+       ! WRITE(*,*) '(BZ): DEBUG Line = ', TRIM(Line)
        LineNum = LineNum + 1
 
        ! Exit the loop if it's the end of the file
@@ -799,7 +799,7 @@ CONTAINS
        ! Skip if the line is commented out
        IF ( Line(1:1) == "#" ) CYCLE
        ! Skip if the line is EMPTY, BZ
-       IF (LEN_TRIM(Line) == 0) CYCLE
+       ! IF (LEN_TRIM(Line) == 0) CYCLE
        ! Zero variables
        FileCloseYmd   = 0
        FileCloseHms   = 0
@@ -1774,8 +1774,8 @@ CONTAINS
           ! section, but still haven't found the ".fields" tag, then we
           ! need to do some further error checking.
           !=================================================================
-         WRITE(*,*) '(BZ)  DEBUG Line = ', TRIM(Line)
-         WRITE(*,*) '(BZ)  DEBUG C before check = ', C
+         ! WRITE(*,*) '(BZ)  DEBUG Line = ', TRIM(Line)
+         ! WRITE(*,*) '(BZ)  DEBUG C before check = ', C
           IF ( C == UNDEFINED_INT ) THEN
 
              !--------------------------------------------------------------
