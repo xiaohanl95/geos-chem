@@ -1,23 +1,4 @@
-! Note (BZ):
-! - Currently not interpolate temperature and other meteorology in solving KPP-related chemistry
-! - Diagnostic file (to be added)
-!     1. Plume lifetime
-!         Plume_id, Plume_life
-!     2. Plume_number
-!         Dt, Num_Plume_inject, Num_Plume_2d, Num_Plume_1d, Num_Plume_dissolve
-!     3. Sulfate Mass
-!         Dt, Mass_S_injected, Mass_S_released
-! - Occasional KPP integration error:
-!     Forced exit from Rosenbrock due to the following error:
-!     --> Step size too small: T + 10*H = T or H < Roundoff
-!     T=  1.565122350165089E-016 and H=  1.565122350165089E-016
-!     ### INTEGRATE RETURNED ERROR AT:           43          16          39
-!- CFL condition and plume box resize issue
-! - Better treat H2O for KPP-related Chemistry
-!     Currently read Eulerian background in Set_inPlume_2d_Kpp_GridBox_Values
-! Sulfate-SS and sulfate-Cloud heteorogeneous reactions are included in KPP, 
-! Not read in SS to supress SS-Sulfate heteorogeneous reaction
-! In cloud sulfate oxidation? 
+
 MODULE Lagrange_singlebox_Mod
   USE Plume_list_Mod
   USE PRECISION_MOD
@@ -239,8 +220,8 @@ CONTAINS
   
     Stop_inject = 0
 
-    NULLIFY(Plume2d_head, Plume2d_tail)
-    NULLIFY(Plume1d_head, Plume1d_tail)
+    NULLIFY(Plume2d_head)
+    NULLIFY(Plume2d_tail)
     
     IF (.not.plume_inject_on) THEN
       WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip initialization'
@@ -423,7 +404,6 @@ CONTAINS
     REAL(fp), POINTER      :: PASV_EU
     REAL(fp)               :: MW_g
     REAL(fp)               :: Dt
-    REAL(fp)               :: Vgrid_2D, Vgrid_1D
     REAL(fp)               :: Entropy2_Concnt, Entropy2_V, Entropy2
     REAL(fp)               :: tracer2_mol, air2_mol, mix2_ratio
     REAL(fp)               :: tracer0_mol, air0_mol, mix0_ratio
@@ -548,15 +528,11 @@ CONTAINS
                 Plume2d_new%PDX    = Dx_init
                 Plume2d_new%PDY    = Dy_init
 
-                Vgrid_2D           = (Plume2d_new%PDX * Plume2d_new%PDY * Plume2d_new%LENGTH ) *1.E6_fp ! cm3
                 ALLOCATE(Plume2d_new%CONCNT2d(n_x_max, n_y_max, n_species))
-                ALLOCATE(Plume2d_new%MassRef2d(n_species))
                 Plume2d_new%CONCNT2d = 0.0e+0_fp
                 ! pass background concentration
                 DO i_species = 1, n_species
                     Plume2d_new%CONCNT2d(:,:,i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
-                    Plume2d_new%MassRef2d(i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev) &
-                                                              * Vgrid_2D  *  n_x_max * n_y_max ! molec 
                 ENDDO
                 ! add tracer concentration
                 DO i_species = 1, num_of_sources
@@ -602,8 +578,6 @@ CONTAINS
     USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
     USE State_Grid_Mod,  ONLY : GrdState
-    !USE State_Diag_Mod,           ONLY : DgnState
-    !USE State_Diag_Mod,           ONLY : DgnMap
     USE UnitConv_Mod
 
     LOGICAL, INTENT(IN)           :: am_I_Root
@@ -611,7 +585,6 @@ CONTAINS
     TYPE(ChmState), INTENT(INOUT) :: State_Chm
     TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
     TYPE(OptInput), INTENT(IN)    :: Input_Opt
-    !TYPE(DgnState), INTENT(INOUT) :: State_Diag ! Diagnostics State object
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
 
     INTEGER                :: previous_units, previous_units_temp
@@ -781,22 +754,17 @@ CONTAINS
   real(fp)               :: eddy_v, eddy_h 
   real(fp)               :: CFL
   real(fp)               :: Pc_middle, Pc_bottom, Pc_top, Pc_left, Pc_right
-  real(fp)               :: background_conc
-  real(fp)               :: mass_plume, mass_plume_new, D_mass_plume, mass_plume_scale
+  real(fp)               :: mass_plume, mass_plume_new, D_mass_plume
   real(fp)               :: background_mass, background_mass_new
-  real(fp)               :: excess_mass
-  ! real(fp)               :: Massref_species
+
   REAL(fp)               :: RK_Dt(5)
   REAL(fp)               :: RK_u(4), RK_v(4), RK_omeg(4)
   REAL(fp)               :: RK_Dlon(4), RK_Dlat(4), RK_Dlev(4)
   real(fp)               :: Pu(n_x_max2,n_y_max2) ! for 2D advection
-  !real(fp)               :: Pc(n_x_max,n_y_max), Pc2(n_x_max,n_y_max) !, Ec(n_x_max,n_y_max)
-  !real(fp)               :: Pc_bdy(n_x_max2,n_y_max2)
+  real(fp)               :: Pc(n_x_max,n_y_max), Pc2(n_x_max,n_y_max) !, Ec(n_x_max,n_y_max)
+  real(fp)               :: Pc_bdy(n_x_max2,n_y_max2)
   real(fp)               :: C2d_prev(n_x_max,n_y_max) !, C2d_prev_extra(n_x_max,n_y_max)
-  real(fp)               :: C2d_new(n_x_max2,n_y_max2)
-  real(fp)               :: C2d_bg(n_x_max2,n_y_max2)
-  !eal(fp)               :: Concnt2D_bdy(n_x_max2, n_y_max2)
-  
+  real(fp)               :: Concnt2D_bdy(n_x_max2, n_y_max2)
 
   REAL(fp), dimension(:,:,:), allocatable :: box_concnt_2D
   !real(fp), dimension(:,:), allocatable :: box_concnt_1D
@@ -836,7 +804,6 @@ CONTAINS
 
 
   Spc                    =>   State_Chm%Species
-  
   Dt = GET_TS_DYN()
   ThisLoc                =   ' -> at plume_physics (in module GeosCore/lagrange_singlebox_mod.F90)'
   RC     =  GC_SUCCESS
@@ -868,8 +835,8 @@ CONTAINS
   i_box = 0
   
   DO WHILE(ASSOCIATED(Plume2d_curr))
-   
-    !i_box         = Plume2d_curr%label
+    i_box = i_box+1
+    write(6,*) 'debug (BZ): solve plume physics in plume box num: ', i_box
     box_lon       = Plume2d_curr%LON
     box_lat       = Plume2d_curr%LAT
     box_lev       = Plume2d_curr%LEV
@@ -887,8 +854,6 @@ CONTAINS
 
     box_concnt_2D = Plume2d_curr%CONCNT2d
 
-    write(6,*) 'debug (BZ): solve plume physics in plume box: ', box_label
-    
     box_life = box_life + Dt
 
     curr_lon      = box_lon
@@ -1190,7 +1155,7 @@ CONTAINS
     curr_pressure    = box_lev      ! hPa
     
     grid_volume     = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp ! [cm3]
-    V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
+    V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp
     
     !====================================================================
     ! calculate the wind shear along plume corss-section
@@ -1236,48 +1201,41 @@ CONTAINS
     ! if Pdx become smaller than half Dx_init,
     ! combine 9 grids into 1 grids. 
     ! Update: box_concnt_2D(), Pdx(), Pdy(),  Extra_mass_2D()
-    ! (BZ): The logic here need to be clarified, temporiraly disable
-    ! Resize and throw an error when not meet CFL condition
     !--------------------------------------------------------------
-    IF(Pdx<=0.5*Dx_init) THEN
-      errMsg = 'Size are too small to meet the CFL condition! '
-          !CALL GC_Error( errMsg, RC, thisLoc )
-      CALL ERROR_STOP( errMsg, thisLoc)
-    ENDIF
-!    IF(Pdx<=0.5*Dx_init)THEN
-!
-!600     CONTINUE
-!      DO i_species = 1, n_species
-!        Pc = box_concnt_2D(:,:,i_species) ! [molec cm-3]
-!        !box_concnt_2D(:,:,i_species) = 0.0
-!        ! Should fill with background concentration
-!        box_concnt_2D(:,:,i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-!
-!        DO i = 1, n_x_max/3, 1
-!        DO j = 1, n_y_max/3, 1
-!
-!          i_x = (i-1)*3+1
-!          i_y = (j-1)*3+1
-!
-!          box_concnt_2D(i+n_x_max/3,j+n_y_max/3,i_species) = &
-!                                    SUM(Pc(i_x:i_x+2,i_y:i_y+2))/9
-!
-!        ENDDO
-!        ENDDO
-!      ENDDO ! DO i_species = 1, n_species
-!
-!      Pdx = Pdx*3
-!      Pdy = Pdy*3
-!
-!
-!
-!      IF(Pdx<=0.5*Dx_init) WRITE(6,*) &
-!          "ERROR 0: more combination: ", Plume2d_curr%label, Pdx, Pdy
-!
-!      IF(Pdx<=0.5*Dx_init) GOTO 600
-!
-!
-!    ENDIF ! IF(Pdx(i_box)<0.5*Dx_init)THEN
+    IF(Pdx<=0.5*Dx_init)THEN
+
+600     CONTINUE
+      DO i_species = 1, n_species
+        Pc = box_concnt_2D(:,:,i_species) ! [molec cm-3]
+        !box_concnt_2D(:,:,i_species) = 0.0
+        ! Should fill with background concentration
+        box_concnt_2D(:,:,i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+
+        DO i = 1, n_x_max/3, 1
+        DO j = 1, n_y_max/3, 1
+
+          i_x = (i-1)*3+1
+          i_y = (j-1)*3+1
+
+          box_concnt_2D(i+n_x_max/3,j+n_y_max/3,i_species) = &
+                                    SUM(Pc(i_x:i_x+2,i_y:i_y+2))/9
+
+        ENDDO
+        ENDDO
+      ENDDO ! DO i_species = 1, n_species
+
+      Pdx = Pdx*3
+      Pdy = Pdy*3
+
+
+
+      IF(Pdx<=0.5*Dx_init) WRITE(6,*) &
+          "ERROR 0: more combination: ", i_box, Plume2d_curr%label, Pdx, Pdy
+
+      IF(Pdx<=0.5*Dx_init) GOTO 600
+
+
+    ENDIF ! IF(Pdx(i_box)<0.5*Dx_init)THEN
     !-------------------------------------------------------------------
        ! Calculate the advection-diffusion in 2D grids
        !-------------------------------------------------------------------
@@ -1285,9 +1243,7 @@ CONTAINS
 
 
         DO i_species= 1, n_species, 1
-          
-          ! Massref_species=Plume2d_curr%MassRef2d(i_species)
-          background_conc = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+
           C2d_prev(1:n_x_max,1:n_y_max) = &
                                   box_concnt_2D(1:n_x_max,1:n_y_max,i_species)
 
@@ -1310,9 +1266,9 @@ CONTAINS
 
           !Concnt2D_bdy(:,:) = 0.0 
           ! Maybe fill the unused outer cells with background concentration
-          C2d_bg(:,:)  = background_conc
-          C2d_bg(2:n_x_max2-1,2:n_y_max2-1) =C2d_prev(1:n_x_max,1:n_y_max)
-          C2d_new (:,:) = C2d_bg (:,:)
+          Concnt2D_bdy(:,:)  = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+          Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1) = box_concnt_2D(:,:,i_species)
+       
         
           IF( abs(Dt/Pdt-Nt) > 0.00001 ) THEN
             WRITE(6,*) "*** ERROR: Check Pdt ***"
@@ -1326,93 +1282,54 @@ CONTAINS
             ! advection ----------------------------------------------------
             ! diffusion ----------------------------------------------------
 
-            !Pc_bdy(:,:) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-            !Pc_bdy(2:n_x_max2-1,2:n_y_max2-1) = Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1)
-            C2d_bg(:,:)  = background_conc
-            C2d_bg(2:n_x_max2-1,2:n_y_max2-1) =C2d_new(2:n_x_max2-1,2:n_y_max2-1) 
+            Pc_bdy(:,:) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+            Pc_bdy(2:n_x_max2-1,2:n_y_max2-1) = Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1)
+
             ! Only calculate the vertical half 2D domain         
 
             !$OMP PARALLEL DO           &
             !$OMP DEFAULT( SHARED     ) &
             !$OMP PRIVATE(i_y,i_x,CFL,Pc_middle,Pc_top,Pc_bottom,Pc_right,Pc_left)
-            DO i_y = 2, n_y_mid2, 1
+            DO i_y = 1, n_y_mid2, 1
             DO i_x = 2, n_x_max2-1, 1
-              Pc_middle = C2d_bg( i_x,   i_y  )
-              Pc_top    = C2d_bg( i_x,   i_y+1)
-              Pc_bottom = C2d_bg( i_x,   i_y-1)
-              Pc_right  = C2d_bg( i_x+1, i_y  )
-              Pc_left   = C2d_bg( i_x-1, i_y  )
+              Pc_middle = Pc_bdy( i_x,   i_y  )
+              Pc_top    = Pc_bdy( i_x,   i_y+1)
+              Pc_bottom = Pc_bdy( i_x,   i_y-1)
+              Pc_right  = Pc_bdy( i_x+1, i_y  )
+              Pc_left   = Pc_bdy( i_x-1, i_y  )
            
               CFL       = Pdt*Pu(i_x,i_y)/Pdx
 
-              C2d_new(i_x, i_y) = Pc_middle           &
+              Concnt2D_bdy(i_x, i_y) = Pc_middle           &
                 - 0.5 * CFL    * ( Pc_right - Pc_left )   &
                 + 0.5 * CFL**2 * ( Pc_right - 2*Pc_middle + Pc_left )         &
                 + Pdt*( eddy_h*( Pc_right -2*Pc_middle +Pc_left   ) /(Pdx**2) &
                        +eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
-              ! update the other half based on vertical symmetry 
-              C2d_new(i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y) 
 
             ENDDO
             ENDDO
             !$OMP END PARALLEL DO
 
           ! update the other half based on vertical symmetry 
-            !DO i_y = n_y_mid2+1, n_y_max2-1, 1
-            !  Concnt2D_bdy(2:n_x_max2-1:1, i_y) = Concnt2D_bdy(n_x_max2-1:2:-1,n_y_max2+1-i_y)
-            !ENDDO
+            DO i_y = n_y_mid2+1, n_y_max2-1, 1
+              Concnt2D_bdy(2:n_x_max2-1:1, i_y) = Concnt2D_bdy(n_x_max2-1:2:-1,n_y_max2+1-i_y)
+            ENDDO
 
           ENDDO ! DO t1s = 1, NINT(Dt/Pdt)
 
 
-          
+          box_concnt_2D(:,:,i_species) = Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1)
 
-          
          !================================================================
-         ! Calculate the mass exchange of plume to background cell
-         ! Update the concentration in the background and plume
-         ! accordingly
+         ! Update the concentration in the background grid cell
+         ! after the interaction with 2D plume
          !================================================================
 
           ! the boundary always represents the background concentration
           mass_plume      = V_grid_2D * SUM(C2d_prev(:,:))! molec
-          mass_plume_new  = V_grid_2D * SUM(C2d_new(2:n_x_max2-1,2:n_y_max2-1))
-          !mass_plume_edge = V_grid_2D * ( SUM(C2d_new(2, 2:n_y_max2-1)) + &
-          !                          SUM(C2d_new(n_x_max2-1, 2:n_y_max2-1)) +   &
-          !                          SUM(C2d_new(3:n_x_max2-2 , 2))   + &
-          !                          SUM(C2d_new(3:n_x_max2-2 , n_y_max2-1)) )
-
+          mass_plume_new  = V_grid_2D * SUM(box_concnt_2D(:,:,i_species))
           D_mass_plume    = mass_plume_new - mass_plume
-          background_mass     = background_conc * grid_volume
-          excess_mass = D_mass_plume - background_mass
 
-          ! If mass need to enter the plume significantly larger than background mass, decrease the 
-          ! mass entered, by scaling the whole plume conc
-          ! If background = 0 but D_MASS_PLUME > (Maybe later change to a lower threshold)
-          IF ((background_mass <= 0.0_fp).AND. (D_mass_plume.GT. 0.0_fp)) THEN
-            ! just print this value to see how small it would be
-            !ErrMsg = "(Debug: BZ) Mass enter the plume but background is 0, Plume num: ", &
-            !        Plume2d_curr%label, '; Species: ', i_species, 'D_mass_plume: ', D_mass_plume
-            !GC_Warning( ErrMsg, RC, ThisLoc )
-            WRITE (6, *) "(Debug: BZ) Mass enter the plume but background is 0, Plume num: ", &
-                    Plume2d_curr%label, '; Species: ', i_species, 'D_mass_plume: ', D_mass_plume
-
-          ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
-            ! Later might need to adjust the species that enter the plume to ensure mass conservation
-            !ErrMsg = "(Debug: BZ) Mass enter the plume larger than mass in background, Plume num: ", &
-            !        Plume2d_curr%label, '; Species: ', i_species, 'D_mass_plume: ', D_mass_plume, &
-            !        'background_mass: ', background_mass
-            !GC_Warning( ErrMsg, RC, ThisLoc )
-            WRITE (6, *) "(Debug: BZ) Mass enter the plume larger than mass in background, Plume num: ", &
-                    Plume2d_curr%label, '; Species: ', i_species, 'D_mass_plume: ', D_mass_plume, &
-                    'background_mass: ', background_mass
-            ! mass_plume_new      = mass_plume + background_mass
-            !mass_edge_scale     = (mass_plume_edge - excess_mass) / mass_plume_edge 
-            !C2d_new(2:n_x_max2-1,2:n_y_max2-1) = C2d_new(2:n_x_max2-1,2:n_y_max2-1) * &
-            !        (mass_plume + background_mass) / mass_plume_new
-          ENDIF
-
-          background_mass_new = MAX( 0.0_fp, background_mass - D_mass_plume )
 
           !i_advect = id_PASV_LA +i_species -1
 
@@ -1420,13 +1337,11 @@ CONTAINS
 
           !backgrd_concnt = ( backgrd_concnt*grid_volume &
                                           !- D_mass_plume) /grid_volume
-          box_concnt_2D(:,:,i_species) = C2d_new(2:n_x_max2-1,2:n_y_max2-1)
-
-          
+          background_mass     = Spc(i_species)%Conc(i_lon,i_lat,i_lev) * grid_volume
+          background_mass_new = background_mass - D_mass_plume
           Spc(i_species)%Conc(i_lon,i_lat,i_lev) = background_mass_new / grid_volume
 
         ENDDO ! DO i_species=1,n_species,1
-    Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
   ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
 
@@ -1477,8 +1392,6 @@ CONTAINS
     USE TIME_MOD,                 ONLY : GET_TS_DYN
     USE State_Grid_Mod,           ONLY : GrdState
     USE UnitConv_Mod
-    !USE State_Diag_Mod,           ONLY : DgnState
-    !USE State_Diag_Mod,           ONLY : DgnMap
     ! KPP-related module
 #ifdef KPP_INTEGRATOR_AUTOREDUCE
     USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_KeepHalogensActive
@@ -1500,7 +1413,6 @@ CONTAINS
     TYPE(ChmState), INTENT(INOUT) :: State_Chm
     TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
     TYPE(OptInput), INTENT(IN)    :: Input_Opt
-    !TYPE(DgnState), INTENT(INOUT) :: State_Diag ! Diagnostics State object
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
 
     
@@ -1610,10 +1522,7 @@ CONTAINS
     ATOL = State_Chm%KPP_AbsTol   ! Absolute tolerance
     RTOL = State_Chm%KPP_RelTol   ! Relative tolerance
 
-    ! IF (State_Diag%Archive_RxnConst        ) Write(6, *) "Debug: (BZ) ; Archive_RxnRate", State_Diag%Archive_RxnRate
-    ! For debug process, print rate constant 202: SO2 + OH {+M} = SO4 + HO2 + PH2SO4 :
-    ! Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN 202 = ", &
-    !   State_Diag%RxnConst(23, 40, 39 ,202)
+
     DO WHILE(ASSOCIATED(Plume2d_curr))
       i_box = i_box+1
       i_lon         = Plume2d_curr%lon_ind
@@ -1906,9 +1815,7 @@ CONTAINS
           !=====================================================================
 
           ! Update the array of rate constants
-          ! Mannually Set K_CLoud and K_MT = 0?
-          ! Read from last timestep
-          ! CALL Update_RCONST()
+          CALL Update_RCONST()
           
           !=====================================================================
           ! HISTORY (aka netCDF diagnostics)
@@ -2054,11 +1961,9 @@ CONTAINS
                            1.0e+6_fp / DT  ! kg s-1 box-1
         
               IF ( H2SO4_RATE_2d(i_x, i_y) < 0.0d0) THEN
-                !ErrMsg = "H2SO4_RATE_2D negative in (Plumeid, x, y):", &
-                !    Plume2d_curr%label, i_x, i_y, "was:", H2SO4_RATE_2d(i_x, i_y), "  setting to 0.0d0"
-                !CALL GC_Warning( ErrMsg, RC, ThisLoc )
-                WRITE(6, *) "H2SO4_RATE_2D negative in (Plumeid, x, y):", &
+                ErrMsg = "H2SO4_RATE_2D negative in (Plumeid, x, y):", &
                     Plume2d_curr%label, i_x, i_y, "was:", H2SO4_RATE_2d(i_x, i_y), "  setting to 0.0d0"
+                CALL GC_Warning( ErrMsg, RC, ThisLoc )
                 H2SO4_RATE_2d(i_x, i_y) = 0.0d0
               ENDIF
 
@@ -2067,12 +1972,10 @@ CONTAINS
                             1.0e+6_fp ! kg per timestep box-1
 
               IF ( PSO4AQ_RATE_2d(i_x, i_y) < 0.0d0) THEN
-                !ErrMsg = "PSO4AQ_RATE_2D negative in (Plumeid, x, y):", &
-                !    Plume2d_curr%label, i_x, i_y, "was:", PSO4AQ_RATE_2d(i_x, i_y), "  setting to 0.0d0"
+                ErrMsg = "PSO4AQ_RATE_2D negative in (Plumeid, x, y):", &
+                    Plume2d_curr%label, i_x, i_y, "was:", PSO4AQ_RATE_2d(i_x, i_y), "  setting to 0.0d0"
                 
-                !CALL GC_Warning( ErrMsg, RC, ThisLoc )
-                WRITE(6, *) "PSO4AQ_RATE_2D negative in (Plumeid, x, y):", &
-                      Plume2d_curr%label, i_x, i_y, "was:", PSO4AQ_RATE_2d(i_x, i_y), "  setting to 0.0d0"
+                CALL GC_Warning( ErrMsg, RC, ThisLoc )
                 PSO4AQ_RATE_2d(i_x, i_y) = 0.0d0
               ENDIF
 #endif
@@ -2165,14 +2068,13 @@ CONTAINS
       !-----------------------------------------------------------------
 
       !-----------------------------------------------------------------
-      ! [Currently not considered]: Carbon chemistry: ChemCarbon << CARBON_MOD
+      ! [Currently not considered]: sulfate chemistry: ChemCarbon << CARBON_MOD
       ! BCPO/ECOB -> BCPI/ECIL and OCPO/OCOB -> OCPI/OCIL:   e-folding time 1.15 days
       ! SOAP -> SOAS, for TOMAS: SOA condensation (COACOND << TOMAS_MOD)
       ! SOA chemistry SOA_CHEMISTRY << CARBON_MOD
       Plume2d_curr => Plume2d_curr%next
     ENDDO
-    !Write (6, *) "Debug: (BZ): In Plume  (After Plume Chem): rate constant for RXN 202 = ", &
-    !    State_Diag%RxnConst(23, 40, 39 ,202)
+  
   END SUBROUTINE plume_chem_microphysics
 
   SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
@@ -2266,14 +2168,12 @@ CONTAINS
         !Stop_loop = 1
         ! Release mass in Plume2d_head in Eulerian grid
         DO i_species = 1, n_species
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * V_grid_2D - &
-                      Plume2d_curr%MassRef2d(i_species)
-          Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
-                         mass_release / grid_volume)
+          conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+          mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
+                       conc_background *n_x_max * n_y_max ) * V_grid_2D
+           Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
+                         Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
+                         mass_release / grid_volume
         ENDDO
 
         WRITE(6,*)'                '
@@ -2295,14 +2195,12 @@ CONTAINS
 		WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
         ! Release mass in Plume2d_curr in Eulerian grid
         DO i_species = 1, n_species
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * V_grid_2D - &
-                      Plume2d_curr%MassRef2d(i_species) 
-          Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
-                         mass_release / grid_volume )
+          conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+          mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
+                       conc_background *n_x_max * n_y_max ) * V_grid_2D
+           Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
+                         Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
+                         mass_release / grid_volume
         ENDDO
 
           Plume2d_tail => Plume2d_prev
@@ -2323,14 +2221,12 @@ CONTAINS
         WRITE(6,*)'debug (BZ): grid_volume=', grid_volume, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
 		WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
         DO i_species = 1, n_species
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * V_grid_2D - &
-                      Plume2d_curr%MassRef2d(i_species) 
+          conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+          mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
+                       conc_background *n_x_max * n_y_max ) * V_grid_2D
            Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
-                         mass_release / grid_volume )
+                         Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
+                         mass_release / grid_volume
         ENDDO
         IF (ASSOCIATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
         DEALLOCATE(Plume2d_curr)
@@ -2343,14 +2239,12 @@ CONTAINS
           WRITE(6,*)'debug (BZ): grid_volume=', grid_volume, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
           WRITE(6,*)'*** Deleting middle node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
           DO i_species = 1, n_species
-            !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-            !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-            !            conc_background *n_x_max * n_y_max ) * V_grid_2D
-            mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * V_grid_2D - &
-                      Plume2d_curr%MassRef2d(i_species) 
+            conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
+            mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
+                        conc_background *n_x_max * n_y_max ) * V_grid_2D
             Spc(i_species)%Conc(i_lon, i_lat, i_lev) =       &
-                          MAX(0.0_fp, Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
-                          mass_release / grid_volume)
+                          Spc(i_species)%Conc(i_lon, i_lat, i_lev) + &
+                          mass_release / grid_volume
           ENDDO
           IF (ASSOCIATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
           DEALLOCATE(Plume2d_curr)

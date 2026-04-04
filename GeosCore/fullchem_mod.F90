@@ -189,9 +189,7 @@ CONTAINS
     ! SAVEd scalars
     LOGICAL,  SAVE         :: FIRSTCHEM = .TRUE.
     INTEGER,  SAVE         :: CH4_YEAR  = -1
-    
-    ! debug (BZ)
-    LOGICAL                :: Flag_Prev
+
     ! Forq
 
 #ifdef MODEL_CLASSIC
@@ -525,10 +523,6 @@ CONTAINS
 #endif
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
-    ! Debug: BZ
-    ! Flag_Prev = State_Diag%Archive_RxnConst
-    ! State_Diag%Archive_RxnConst = .True.
-    ! WRITE(6,*) 'Debug (BZ): Do_Chemistry, Print Flag_Pre, ', Flag_Prev, 'Flag_Curr, ', State_Diag%Archive_RxnConst
     !========================================================================
     ! MAIN LOOP: Compute reaction rates and call chemical solver
     !
@@ -1012,7 +1006,6 @@ CONTAINS
 
           DO S = 1, State_Diag%Map_RxnConst%nSlots
              N = State_Diag%Map_RxnConst%slot2Id(S)
-             ! WRITE( 6, *) "Debug (BZ):, N =", N, "S = ", S
              State_Diag%RxnConst(I,J,L,S) = RCONST(N)
           ENDDO
 
@@ -1566,11 +1559,7 @@ CONTAINS
     !$OMP END PARALLEL DO
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
     WRITE(6,*) 'Debug (BZ): Do_Chemistry  (after main loop): PhotoRxn:  O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
-    ! Debug: BZ
-    ! Flag_Prev = State_Diag%Archive_RxnConst
-    ! State_Diag%Archive_RxnConst = Flag_Prev
-    !Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): rate constant for RXN 202 = ", &
-    !    State_Diag%RxnConst(23, 40, 39 ,202)
+
     !=======================================================================
     ! Return gracefully if integration failed 2x anywhere
     ! (as we cannot break out of a parallel DO loop!)
