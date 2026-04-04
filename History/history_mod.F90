@@ -779,7 +779,6 @@ CONTAINS
        ! and keep track of the line number for error output
  500   CONTINUE
        Line    = ReadOneLine( fId, EOF, IOS, Squeeze=.TRUE. )
-       WRITE(*,*) '(BZ): DEBUG Line = ', TRIM(Line)
        LineNum = LineNum + 1
 
        ! Exit the loop if it's the end of the file
@@ -798,8 +797,7 @@ CONTAINS
 
        ! Skip if the line is commented out
        IF ( Line(1:1) == "#" ) CYCLE
-       ! Skip if the line is EMPTY, BZ
-       IF (LEN_TRIM(Line) == 0) CYCLE
+
        ! Zero variables
        FileCloseYmd   = 0
        FileCloseHms   = 0
@@ -1774,8 +1772,6 @@ CONTAINS
           ! section, but still haven't found the ".fields" tag, then we
           ! need to do some further error checking.
           !=================================================================
-         WRITE(*,*) '(BZ)  DEBUG Line = ', TRIM(Line)
-         WRITE(*,*) '(BZ)  DEBUG C before check = ', C
           IF ( C == UNDEFINED_INT ) THEN
 
              !--------------------------------------------------------------
@@ -3242,7 +3238,6 @@ CONTAINS
     ! not skip collections that we have already encountered.  But it
     ! only gets done during the init phase, so it might not be a huge
     ! expenditure of time anyway.  Worry about this later. (bmy, 1/18/18)
-    WRITE(*,*) '(BZ): CollectionCount = ', CollectionCount
     DO C = 1, CollectionCount
 
        ! Check to see if the current line matches the collection name
