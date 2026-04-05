@@ -38,6 +38,7 @@ MODULE Lagrange_singlebox_Mod
   PUBLIC :: plume_inject_box
   PUBLIC :: plume_model_box
   PUBLIC :: plume_mod_cleanup_box
+  PUBLIC :: plume_dissolve_all
 
   ! PUBLIC VARIABLES:
   PUBLIC :: RXNRATE_CONST_KPP
