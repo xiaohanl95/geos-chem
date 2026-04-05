@@ -1447,8 +1447,14 @@ CONTAINS
 
           
           Spc(i_species)%Conc(i_lon,i_lat,i_lev) = background_mass_new / grid_volume
-
+          
+          IF (i_species .eq. id_SO4) THEN
+            WRITE (6, *) "(Debug: BZ) SO4 Mass enter plume num: ", &
+                      Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
+          ENDIF
         ENDDO ! DO i_species=1,n_species,1
+        
+
     Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
   ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
@@ -2665,8 +2671,8 @@ CONTAINS
 
     ! ELSE
       ! IF deletion occur, no need to move Plume_prev and Plume_curr
-      Plume2d_prev => Plume2d_curr
-      Plume2d_curr => Plume2d_curr%next 
+      ! Plume2d_prev => Plume2d_curr
+      ! Plume2d_curr => Plume2d_curr%next 
     ! ENDIF
     
     ENDDO
