@@ -982,9 +982,13 @@ CONTAINS
     Pdy           = Plume2d_curr%PDY
 
     box_concnt_2D = Plume2d_curr%CONCNT2d
-
-    write(6,*) 'debug (BZ): solve plume physics in plume box: ', box_label
     
+    V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
+    
+    write(6,*) 'debug (BZ): solve plume physics in plume box: ', box_label
+    write(6,*) 'debug (BZ): SO2mass before physics: ', SUM(box_concnt_2D(:,:,id_SO2)) *  V_grid_2D
+    write(6,*) 'debug (BZ): SO4mass before physics: ', SUM(box_concnt_2D(:,:,id_SO4)) *  V_grid_2D
+
     box_life = box_life + Dt
 
     curr_lon      = box_lon
@@ -1264,6 +1268,9 @@ CONTAINS
 
     Plume2d_curr%CONCNT2d    = box_concnt_2D
 
+    V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
+    write(6,*) 'debug (BZ): SO2mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
+    write(6,*) 'debug (BZ): SO4mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
     !-------- solve in-plume concentration here
     ! advection and diffusion
     
@@ -1525,6 +1532,8 @@ CONTAINS
             mass_S_SO2_r1 = mass_S_SO2_r1 + D_mass_plume
             mass_S_SO2_1_1 = mass_S_SO2_1_1 + mass_plume
             WRITE (6, *) "(Debug: BZ) ID_SO2 is", i_species 
+            write(6,*) 'debug (BZ): SO2mass middle physics 2: ', SUM(mass_plume) * V_grid_2D
+            write(6,*) 'debug (BZ): SO2mass middle physics 3: ', SUM(mass_plume_new) * V_grid_2D
             ! mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
           IF (i_species .eq. id_SO4) THEN
@@ -1533,6 +1542,8 @@ CONTAINS
             WRITE (6, *) "(Debug: BZ) ID_SO4 is", i_species          
             mass_S_SO4_r1 = mass_S_SO4_r1 + D_mass_plume
             mass_S_SO4_1_1 = mass_S_SO4_1_1 + mass_plume
+            write(6,*) 'debug (BZ): SO4mass middle physics 2: ', SUM(mass_plume) * V_grid_2D
+            write(6,*) 'debug (BZ): SO4mass middle physics 3: ', SUM(mass_plume_new) * V_grid_2D
             ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
         ENDDO ! DO i_species=1,n_species,1
@@ -1541,7 +1552,8 @@ CONTAINS
 
     mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
-
+    write(6,*) 'debug (BZ): SO2mass after physics: ', SUM(box_concnt_2D(:,:,id_S2)) * V_grid_2D
+     write(6,*) 'debug (BZ): SO4mass after physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
     Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
   ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
@@ -2184,7 +2196,7 @@ CONTAINS
              PRINT*, '### KPP DEBUG OUTPUT!'
              PRINT*, '### Species concentrations at problem box ',i_x, i_y, Plume2d_curr%label
              PRINT*, REPEAT( '#', 79 )
-             DO i_species = 1, n_species
+             DO i_species = 1, NSPEC
                 IF (C(i_species) .lt. 0.0_dp) THEN
                   C(i_species) = C_before_integrate(i_species)
                   Write (6, *) "Revert Species num: ", i_species
