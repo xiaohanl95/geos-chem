@@ -1757,13 +1757,13 @@ CONTAINS
           ! Get photolysis rates (daytime only)
           ! Update SUNCOSmid threshold from 0 to cos(98 degrees)
           ! Loop over the FAST-JX photolysis species
-          IF ( State_Met%SUNCOSmid(i_lon,i_lat) > -0.1391731e+0_fp ) THEN
-            ! Only proceed if doing photolysis
-            IF ( Input_Opt%Do_Photolysis ) THEN
-              DO i_phot = 1, State_Chm%Phot%nMaxPhotRxns
+          ! IF ( State_Met%SUNCOSmid(i_lon,i_lat) > -0.1391731e+0_fp ) THEN
+          !  ! Only proceed if doing photolysis
+          !  IF ( Input_Opt%Do_Photolysis ) THEN
+          !    DO i_phot = 1, State_Chm%Phot%nMaxPhotRxns
 
                 ! Copy photolysis rate from FAST_JX into KPP PHOTOL array
-                PHOTOL(i_phot) = State_Chm%Phot%ZPJ(i_lev,i_phot,i_lon,i_lat)
+          !      PHOTOL(i_phot) = State_Chm%Phot%ZPJ(i_lev,i_phot,i_lon,i_lat)
                 ! In GEOS-Chem, maybe useful to archieve instantaneous photolysis rate [s -1] and noon time photolysis rate [s -1]
                 ! The mapping between the GEOS-Chem photolysis species and
                 ! the FAST-JX photolysis species is contained in the lookup
@@ -1778,7 +1778,7 @@ CONTAINS
                 !    1..State_Chm%Phot%nMaxPhotRxns) in the GC_PHOTO_ID array
 
                 ! GC photolysis species index
-                P = State_Chm%Phot%GC_Photo_Id(i_phot)
+            !    P = State_Chm%Phot%GC_Photo_Id(i_phot)
                 ! Below is diagnostic steps and might be ignored for now
                 ! If this FAST_JX photolysis species maps to a valid
                 ! GEOS-Chem photolysis species (for this simulation)...
@@ -1794,9 +1794,9 @@ CONTAINS
                   ! to facilitate cleaner diagnostic indexing (bmy, 6/3/20)
                 !ENDIF
 
-              ENDDO
-            ENDIF
-          ENDIF
+             ! ENDDO
+            !ENDIF
+          !ENDIF
           
           ! Initialize the KPP "C" vector of species concentrations [molec/cm3]
           DO i_species = 1, NSPEC
@@ -1931,7 +1931,7 @@ CONTAINS
           ! Mannually Set K_CLoud and K_MT = 0?
           ! Read from last timestep
           ! CALL Update_RCONST()
-          
+            RCONST = RXNRATE_CONST_KPP (i_lon, i_lat, i_lev, :)
           !=====================================================================
           ! HISTORY (aka netCDF diagnostics)
           !
@@ -2244,7 +2244,10 @@ CONTAINS
     RC                     =   GC_SUCCESS
     ErrMsg                 =   ''
     NULLIFY(Plume2d_new, Plume2d_curr, Plume2d_prev)
-
+    ! Debug for dissolving plume at exit time
+    IF (ITS_TIME_FOR_EXIT()) THEN
+      Write (6, *) "Debug (BZ): Dissolve all plumes at the last timestep"
+    ENDIF
     !ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species))
     ! dissolve 2D plume seg 
     ! lifetime larger than 1-Day
@@ -2279,6 +2282,7 @@ CONTAINS
       ! delete the node for 2D plume (current criteria: plume lifetime > 1days)
       ! At the end of simulation, automatically dissolve all plumes
       ! --------------------------------------------------------------------
+      
       IF((box_life .GT. 1.0*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
     
       ! delete the only node
