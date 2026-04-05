@@ -91,7 +91,7 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp) 		          :: mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, mass_S_SO2_4 
   REAL(fp) 		          :: mass_S_SO4_b, mass_S_SO4_inj, mass_S_SO4_r1, mass_S_SO4_r2 
   REAL(fp) 		          :: mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4
-
+  REAL(fp) 		          :: mass_S_SO2_1_1, mass_S_SO4_1_1
 
   ! Diagnostic file names, initialized in lagr_init
   CHARACTER(LEN=255)    :: file_Smass
@@ -268,7 +268,7 @@ CONTAINS
     mass_S_SO2_inj             =      0
     mass_S_SO2_r1              =      0
     mass_S_SO2_r2              =      0
-
+    
     mass_S_SO4_b               =      0
     mass_S_SO4_1               =      0
     mass_S_SO4_2               =      0
@@ -278,6 +278,8 @@ CONTAINS
     mass_S_SO4_r1              =      0
     mass_S_SO4_r2              =      0
 
+    mass_S_SO2_1_1             =      0
+    mass_S_SO4_1_1             =      0
 
     Dt = GET_TS_DYN()
     N_parcel = NINT(Aircraft_speed * Dt / Length_init)
@@ -758,10 +760,10 @@ CONTAINS
       ! Temporary write the output here
       OPEN( File_Smass_IU,      FILE=TRIM( file_Smass   ), STATUS='OLD',  &
           POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-      WRITE(File_Smass_IU,*) mass_S_SO2_inj, mass_S_SO2_b,  mass_S_SO2_r1,  mass_S_SO2_r2, & 
+      WRITE(File_Smass_IU,'(*(ES12.4,1X))') mass_S_SO2_inj, mass_S_SO2_b,  mass_S_SO2_r1,  mass_S_SO2_r2, & 
             mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, mass_S_SO2_4, &
             mass_S_SO4_b,  mass_S_SO4_r1,  mass_S_SO4_r2, & 
-            mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4
+            mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4, mass_S_SO2_1_1, mass_S_SO4_1_1
 
 
       ! convert unit back
@@ -1183,7 +1185,7 @@ CONTAINS
     endif
 
     ! PV=nRT, V2 = T2/P2 : T1/P1 * V1
-    ratio = ( (next_T2/box_lev)/(curr_T1/curr_pressure) )**(1/2)
+    ratio = SQRT( (next_T2/box_lev)/(curr_T1/curr_pressure) )
 
     ! assume the volume change mainly apply to the cross-section, 
     ! the box_length would not change 
@@ -1521,16 +1523,22 @@ CONTAINS
 
           IF (i_species .eq. id_SO2) THEN
             mass_S_SO2_r1 = mass_S_SO2_r1 + D_mass_plume
+            mass_S_SO2_1_1 = mass_S_SO2_1_1 + mass_plume
+            WRITE (6, *) "(Debug: BZ) ID_SO2 is", i_species 
             ! mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
           IF (i_species .eq. id_SO4) THEN
             WRITE (6, *) "(Debug: BZ) SO4 Mass enter plume num: ", &
                       Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
+            WRITE (6, *) "(Debug: BZ) ID_SO4 is", i_species          
             mass_S_SO4_r1 = mass_S_SO4_r1 + D_mass_plume
+            mass_S_SO4_1_1 = mass_S_SO4_1_1 + mass_plume
             ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
         ENDDO ! DO i_species=1,n_species,1
-        
+    WRITE (6, *) "(Debug: BZ) ID_SO4 is: ", id_SO4
+    WRITE (6, *) "(Debug: BZ) ID_SO2 is: ", id_SO2
+
     mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
 
