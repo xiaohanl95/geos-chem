@@ -1949,7 +1949,74 @@ CONTAINS
                                                  State_Met, FirstChem,          &
                                                  i_lon,    i_lat,  i_lev,       &
                                                  ICNTRL,    RCNTRL             )
+          ! BZ, this needs to be modified from KPP/fullchem/fullchem_AutoReduceFuncs.F90
+          ! Initialize Hstart (the starting value of the integration step
+          ! size with the value of Hnew (the last predicted but not yet 
+          ! taken timestep)  saved to the the restart file.
+          RCNTRL(3) = State_Chm%KPPHvalue(i_lon,i_lat,i_lev)
+          !---------------------------------------------------------------------
+          ! Auto-reduce threshold, Method 1: Pressure-dependent
+          !                                            
+          !   Actual_Threshold =
+          !                                           Mid-Pressure at Level
+          !     AUTOREDUCE_THRESHOLD (at surface) * --------------------------
+          !                                          "Mid-Pressure" at Sfc.
+          !
+          !---------------------------------------------------------------------
+          IF ( .not. Input_Opt%AUTOREDUCE_IS_KEY_THRESHOLD ) THEN
+            IF ( Input_Opt%AUTOREDUCE_IS_PRS_THRESHOLD ) THEN
+                RCNTRL(12) = Input_Opt%AUTOREDUCE_THRESHOLD                        & 
+                          * State_Met%PMID(i_lon,i_lat,i_lev)                                 & 
+                          / State_Met%PMID(i_lon,i_lat,1)
+            ENDIF
+            
+            IF ( .not. Input_Opt%AUTOREDUCE_IS_PRS_THRESHOLD ) THEN
+                RCNTRL(12) = Input_Opt%AUTOREDUCE_THRESHOLD
+            ENDIF
+          ENDIF
+
+          !---------------------------------------------------------------------
+          ! Auto-reduce threshold, Method 2: Determine threshold 
+          ! dynamically by scaling rates of key species.
+          !---------------------------------------------------------------------
+          IF ( Input_Opt%AUTOREDUCE_IS_KEY_THRESHOLD ) THEN
+
+            !--------------------------------
+            ! Daytime target species (OH)
+            !--------------------------------
+            ICNTRL(14) = ind_OH
+            RCNTRL(14) = Input_Opt%AUTOREDUCE_TUNING_OH
+            
+            !--------------------------------
+            ! Nighttime target species (NO2)
+            !--------------------------------
+            ! COMMENTS BY HAIPENG LIN:
+            ! 1e6 daytime conc...testing shows 5e-5 as an offset here works best.
+            ! Use JNO2 as night determination.
+            ! RXN_NO2: NO2 + hv --> NO  + O
+            ! JNO2 ranges from 0 to 0.02 and is order ~ 1e-4 at the terminator. 
+            ! We set this threshold to be slightly relaxed so it captures the 
+            ! terminator, but this needs some tweaking.
+            !
+            ! For some reason, RXN_NO2 as a proxy fails to propagate the sunset 
+            ! terminator even though all diagnostics seem fine, and after a while 
+            ! only the OH scheme applies.  Use SUNCOSmid as a proxy to fix this. 
+            ! (hplin, 4/20/22)
+            ! IF(ZPJ(L,RXN_NO2,I,J) .eq. 0.0_fp) THEN
+            !
+            IF( State_Met%SUNCOSmid(i_lon, i_lat) .le. -0.1391731e+0_dp ) THEN
+                ICNTRL(14) = ind_NO2
+                RCNTRL(14) = Input_Opt%AUTOREDUCE_TUNING_NO2
+            ENDIF
+          ENDIF
 #endif
+          ! ICNTRL(16) option
+          ! 0 -> do nothing.
+          ! 1 -> set negative values to zero
+          ! 2 -> return with error code
+          ! 3 -> stop at negative
+          ICNTRL(16) = 1
+          ICNTRL(15) =  -1 ! ICNTRL(15) = -1 ! Do not call Update_* functions within the integrator
           !=====================================================================
           ! Integrate the box forwards
           !=====================================================================
@@ -1988,7 +2055,7 @@ CONTAINS
             ENDIF
 
             ! Update rates again
-            CALL Update_RCONST()
+            ! CALL Update_RCONST()
 
             ! Call the integrator
             ! NOTE: Some integrators (like LSODE) will overwrite the TIN value
@@ -2009,25 +2076,32 @@ CONTAINS
              !
              ! Set a flag to break out of loop gracefully
              ! NOTE: You can set a GDB breakpoint here to examine the error
-             Failed2x = .TRUE.
+             ! BZ: Temperoray let the code continue  
+             ! Failed2x = .TRUE.
 
              ! Print concentrations at failure grid box
              PRINT*, REPEAT( '#', 79 )
              PRINT*, '### KPP DEBUG OUTPUT!'
-             PRINT*, '### Species concentrations at problem box ',i_lon, i_lat, Plume2d_curr%label
+             PRINT*, '### Species concentrations at problem box ',i_x, i_y, Plume2d_curr%label
              PRINT*, REPEAT( '#', 79 )
              DO i_species = 1, n_species
-                PRINT*, C(i_species), TRIM( ADJUSTL( SPC_NAMES(i_species) ) )
+                IF (C(i_species) .lt. 0.0_dp) THEN
+                  C(i_species) = C_before_integrate(i_species)
+                  Write (6, *) "Revert Species num: ", i_species
+                ENDIF
              ENDDO
+             ! DO i_species = 1, n_species
+             !   PRINT*, C(i_species), TRIM( ADJUSTL( SPC_NAMES(i_species) ) )
+             !ENDDO
 
              ! Print rate constants at failure grid box
              PRINT*, REPEAT( '#', 79 )
              PRINT*, '### KPP DEBUG OUTPUT!'
-             PRINT*, '### Reaction rates at problem box ', i_lon, i_lat, Plume2d_curr%label
+             PRINT*, '### Reaction rates at problem box ', i_x, i_y, Plume2d_curr%label
              PRINT*, REPEAT( '#', 79 )
-             DO i_rxn = 1, NREACT
-                PRINT*, RCONST(i_rxn), TRIM( ADJUSTL( EQN_NAMES(i_rxn) ) )
-             ENDDO
+             ! DO i_rxn = 1, NREACT
+              !  PRINT*, RCONST(i_rxn), TRIM( ADJUSTL( EQN_NAMES(i_rxn) ) )
+             ! ENDDO
              !
              !$OMP END CRITICAL
              !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
