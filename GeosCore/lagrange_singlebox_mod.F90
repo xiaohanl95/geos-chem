@@ -58,7 +58,7 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp)                              :: Dy_init
   REAL(fp)                              :: Length_init    ! m
   REAL(fp)                              :: Aircraft_speed ! m/s
-  REAL(fp), ALLOCATABLE                 :: RXNRATE_CONST_KPP(:,:,:,:)
+
   ! Other variables
   INTEGER               :: n_species
   INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
@@ -74,15 +74,27 @@ MODULE Lagrange_singlebox_Mod
   INTEGER               :: tt 
   INTEGER               :: N_total
   INTEGER               :: Stop_inject ! 1: stop injecting; 0: keep injecting
-
-
+  ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_Smass_IU
+  
   REAL(fp)              :: DX, DY
-  REAL(fp) 		          :: mass_eu, mass_la, mass_la2
   REAL(fp)              :: Length_lat
   REAL(fp), POINTER     :: X_mid(:), Y_mid(:), P_mid(:)
   REAL(fp), POINTER     :: P_edge(:)
   REAL(fp), POINTER     :: X_edge(:), Y_edge(:)
   REAL(fp)              :: X_edge2, Y_edge2
+  REAL(fp), ALLOCATABLE :: RXNRATE_CONST_KPP(:,:,:,:)
+  ! Variable to track sulfate mass (in molec S)
+  ! injected, r1: release in physics, (check release in chem?) r2 plume dissolve
+  ! b:background, 1: after injection 2: after physics 3: after chem 4: after dissolve
+  REAL(fp) 		          :: mass_S_SO2_b, mass_S_SO2_inj, mass_S_SO2_r1, mass_S_SO2_r2 
+  REAL(fp) 		          :: mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, mass_S_SO2_4 
+  REAL(fp) 		          :: mass_S_SO4_b, mass_S_SO4_inj, mass_S_SO4_r1, mass_S_SO4_r2 
+  REAL(fp) 		          :: mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4
+
+
+  ! Diagnostic file names, initialized in lagr_init
+  CHARACTER(LEN=255)    :: file_Smass
 
   ! some parameter for sensitive test
   INTEGER, PARAMETER        :: N1_split = 5     ! Cross-section splitting
@@ -91,6 +103,8 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp), PARAMETER       :: Dissolve_critiria = 10*0.01
   REAL(fp), PARAMETER       :: Volume_percent    = 30*0.01
   REAL(fp), PARAMETER       :: Critical_day      = 28.0         ! [day]
+
+  
 
   ! Species ID flags
   INTEGER :: id_SO2,  id_SO4,  id_OH,   id_O3,   id_NH3,   id_NH4,   id_H2O
@@ -118,7 +132,8 @@ CONTAINS
     USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
     USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
-    
+    USE InquireMod,      ONLY : findFreeLun
+
     LOGICAL,        INTENT(IN)            :: am_I_Root   ! Are we on the root CPU
     TYPE(MetState), intent(in)            :: State_Met
     TYPE(ChmState), intent(inout)         :: State_Chm
@@ -133,6 +148,8 @@ CONTAINS
     INTEGER                       :: id_tracer, N
     INTEGER                       :: i_lon, i_lat, i_lev            !1:IIPAR
     INTEGER                       :: previous_units, previous_units_temp
+    
+    INTEGER                       :: IOS
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: FILENAME, FileEntropy, File996
     CHARACTER(LEN=255)            :: FILENAME2, FILENAME3
@@ -243,7 +260,25 @@ CONTAINS
     n_x_mid2                   =      (n_x_max2+1)/2 
     n_y_mid2                   =      (n_y_max2+1)/2
 
-    
+    mass_S_SO2_b               =      0
+    mass_S_SO2_1               =      0
+    mass_S_SO2_2               =      0
+    mass_S_SO2_3               =      0
+    mass_S_SO2_4               =      0
+    mass_S_SO2_inj             =      0
+    mass_S_SO2_r1              =      0
+    mass_S_SO2_r2              =      0
+
+    mass_S_SO4_b               =      0
+    mass_S_SO4_1               =      0
+    mass_S_SO4_2               =      0
+    mass_S_SO4_3               =      0
+    mass_S_SO4_4               =      0
+    mass_S_SO4_inj             =      0
+    mass_S_SO4_r1              =      0
+    mass_S_SO4_r2              =      0
+
+
     Dt = GET_TS_DYN()
     N_parcel = NINT(Aircraft_speed * Dt / Length_init)
     IF (N_parcel<1) N_parcel=1
@@ -265,6 +300,20 @@ CONTAINS
       !CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
     ENDIF
+    ! Creat file for sulfur mass diag
+    File_Smass_IU = findFreeLun()
+    file_Smass   = 'Plume_Sulfur_mass.txt'
+    OPEN( File_Smass_IU, FILE=TRIM( file_Smass ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    CLOSE(File_Smass_IU)
+
+    ! Return if there was an error opening the file
+    ! IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ! ERRMSG  = 'create sulfur mass file (in lagrange_init_box)'
+    !   CALL GC_Error( ERRMSG, RC, ThisLoc )
+    !   RETURN
+    ! ENDIF
 
     ! Convert unit from mol/mol dry to kg/kg dry to molec/cm3
     ! unit is mol/mol dry, first convert mol/mol dry to kg/kg dry
@@ -457,6 +506,7 @@ CONTAINS
     ThisLoc                =   ' -> at plume_inject_box (in module GeosCore/lagrange_singlebox_mod.F90)'
 
     id_SO4= Ind_('SO4')
+    id_SO2= Ind_('SO2')
 
     IF (.NOT.plume_inject_on) THEN
       !WRITE(6,'(a)') ' No plume injection, no lagrangian module configuration, skip '
@@ -525,7 +575,7 @@ CONTAINS
                     Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
                             + (Length_init * Plume_sources(i_species)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
                             /(State_Met%AIRVOL(i_lon, i_lat, i_lev) * 1.0e+6_fp) ! molec/cm3
-                    write(6,*) 'debug (BZ): species: ', spc_name, 'id: ', id_tracer, 'conc after injection: ', Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
+                    write(6,*) 'debug (BZ): species: ', TRIM(spc_name), 'id: ', id_tracer, 'conc after injection: ', Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
 
                 ENDDO
             ENDDO
@@ -570,6 +620,9 @@ CONTAINS
                     Plume2d_new%MassRef2d(i_species) = Spc(i_species)%Conc(i_lon, i_lat, i_lev) &
                                                               * Vgrid_2D  *  n_x_max * n_y_max ! molec 
                 ENDDO
+                mass_S_SO2_b             =      mass_S_SO2_b + Plume2d_new%MassRef2d(id_SO2)
+                mass_S_SO4_b             =      mass_S_SO4_b + Plume2d_new%MassRef2d(id_SO4)
+
                 ! add tracer concentration
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
@@ -579,6 +632,14 @@ CONTAINS
                                 /(Plume2d_new%PDX * Plume2d_new%PDY *Plume2d_new%LENGTH*1.E6_fp ) ! molec/cm3
                                 
                 ENDDO
+                mass_S_SO2_inj = mass_S_SO2_inj + &
+                        (Plume2d_new%LENGTH * Plume_sources(1)%rate) / 64.0_fp * Avo 
+                mass_S_SO2_1 = mass_S_SO2_1 + & 
+                        SUM(Plume2d_new%CONCNT2d(:, :, id_SO2)) * Vgrid_2D 
+               
+                mass_S_SO4_1 = mass_S_SO4_1 +  &
+                        SUM(Plume2d_new%CONCNT2d(:,:, id_SO4)) * Vgrid_2D 
+
                 NULLIFY(Plume2d_new%next)
                 IF ( .NOT. ASSOCIATED(Plume2d_head) ) THEN
                   ! First node in the list
@@ -694,6 +755,15 @@ CONTAINS
 
       ! write diagnostic output
       CALL lagrange_write_std( am_I_Root, RC )
+      ! Temporary write the output here
+      OPEN( File_Smass_IU,      FILE=TRIM( file_Smass   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_Smass_IU,*) mass_S_SO2_inj, mass_S_SO2_b,  mass_S_SO2_r1,  mass_S_SO2_r2, & 
+            mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, mass_S_SO2_4, &
+            mass_S_SO4_b,  mass_S_SO4_r1,  mass_S_SO4_r2, & 
+            mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4
+
+
       ! convert unit back
       CALL Convert_Spc_Units(                                            &
                Input_Opt      = Input_Opt,                                   &
@@ -776,6 +846,7 @@ CONTAINS
   INTEGER                :: Nt
   INTEGER                :: t1s
   INTEGER                :: OrigUnit
+  INTEGER                :: box_label
 
   REAL(fp)               :: MW_g
   REAL(fp)               :: Dt
@@ -787,7 +858,7 @@ CONTAINS
   real(fp)               :: Pdx, Pdy, Pdt
   REAL(fp)               :: box_lon, box_lat, box_lev                          
   real(fp)               :: box_length, box_alpha, box_theta
-  real(fp)               :: box_life, box_label
+  real(fp)               :: box_life
   REAL(fp)               :: box_x_PS, box_y_PS
   real(fp)               :: box_u, box_v, box_omeg
   REAL(fp)               :: dbox_lon, dbox_lat, dbox_lev
@@ -1447,13 +1518,21 @@ CONTAINS
 
           
           Spc(i_species)%Conc(i_lon,i_lat,i_lev) = background_mass_new / grid_volume
-          
+
+          IF (i_species .eq. id_SO2) THEN
+            mass_S_SO2_r1 = mass_S_SO2_r1 + D_mass_plume
+            ! mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
+          ENDIF
           IF (i_species .eq. id_SO4) THEN
             WRITE (6, *) "(Debug: BZ) SO4 Mass enter plume num: ", &
                       Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
+            mass_S_SO4_r1 = mass_S_SO4_r1 + D_mass_plume
+            ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
         ENDDO ! DO i_species=1,n_species,1
         
+    mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
+    mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
 
     Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
@@ -1547,7 +1626,7 @@ CONTAINS
     INTEGER                       :: ICNTRL (20)
 
 
-    !REAL(fp)                      :: Dt
+    REAL(fp)                      :: Vgrid_2D
     REAL(fp)                      :: SO4_FRAC,   SR,        LWC
     REAL(dp)                      :: RCNTRL (20)
     REAL(dp)                      :: RSTATE (20)
@@ -1648,6 +1727,8 @@ CONTAINS
       i_lon         = Plume2d_curr%lon_ind
       i_lat         = Plume2d_curr%lat_ind
       i_lev         = Plume2d_curr%lev_ind
+
+      Vgrid_2D     = Plume2d_curr%Pdx * Plume2d_curr%Pdy * Plume2d_curr%length * 1.0e+6_fp ! [cm3]
       ! Test if we need to do the chemistry for box (I,J,L),
       ! otherwise move onto the next box.
       ! MaxChemLev = MaxStratLev = 59 
@@ -1658,6 +1739,7 @@ CONTAINS
         Plume2d_curr%label, i_lon, i_lat, i_lev
         plume2d_curr => plume2d_curr%next
         ! BZ: Maybe if plume reach out of chem grid, directly release species to Eulerian grid?
+        ! Add mass to released species
         CYCLE
       ENDIF
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO2 ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
@@ -2028,6 +2110,8 @@ CONTAINS
           !=====================================================================
           ! Integrate the box forwards
           !=====================================================================
+          ! BZ manually set H2, O2, N2 equals to background
+          ! C(345) = 
           C_before_integrate = C
           CALL Integrate( 0.0_dp, DT, ICNTRL, RCNTRL, ISTATUS, RSTATE, IERR )
           ! Print grid box indices to screen if integrate failed
@@ -2273,6 +2357,8 @@ CONTAINS
       ! BCPO/ECOB -> BCPI/ECIL and OCPO/OCOB -> OCPI/OCIL:   e-folding time 1.15 days
       ! SOAP -> SOAS, for TOMAS: SOA condensation (COACOND << TOMAS_MOD)
       ! SOA chemistry SOA_CHEMISTRY << CARBON_MOD
+      mass_S_SO2_3 = mass_S_SO2_3 + SUM(Plume2d_curr%CONCNT2d(:,:, id_SO2)) * Vgrid_2D
+      mass_S_SO4_3 = mass_S_SO4_3 + SUM(Plume2d_curr%CONCNT2d(:,:, id_SO4)) * Vgrid_2D
       Plume2d_curr => Plume2d_curr%next
     ENDDO
     !Write (6, *) "Debug: (BZ): In Plume  (After Plume Chem): rate constant for RXN 202 = ", &
@@ -2366,7 +2452,14 @@ CONTAINS
       ! --------------------------------------------------------------------
       
       IF((box_life .GT. 1.0*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
-    
+        mass_S_SO2_r2 = mass_S_SO2_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))  * V_grid_2D - &
+                      Plume2d_curr%MassRef2d(id_SO2)
+        mass_S_SO4_r2 = mass_S_SO4_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))  * V_grid_2D - &
+                      Plume2d_curr%MassRef2d(id_SO4)
+        mass_S_SO2_4 = mass_S_SO2_3 - (SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))  * V_grid_2D - &
+                      Plume2d_curr%MassRef2d(id_SO2))
+        mass_S_SO4_4 = mass_S_SO4_3 - (SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))  * V_grid_2D - &
+                      Plume2d_curr%MassRef2d(id_SO4))
       ! delete the only node
       IF(.NOT.ASSOCIATED(Plume2d_curr%next) .AND. &
                       .NOT.ASSOCIATED(Plume2d_prev))THEN
