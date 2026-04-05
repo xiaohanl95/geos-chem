@@ -2139,7 +2139,9 @@ PROGRAM GEOS_Chem
   !              ***** C L E A N U P   A N D   Q U I T *****
   !==========================================================================
 9999 CONTINUE
-
+  ! BZ dissolve all existing plume
+  CALL plume_dissolve_all(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+  
   ! Skip operations when running in dry-run mode
   IF ( notDryRun ) THEN
 
@@ -2220,7 +2222,7 @@ PROGRAM GEOS_Chem
      ErrMsg = 'Error encountered in "plume_mod_cleanup_box"!'
      CALL Error_Stop( ErrMsg, ThisLoc )
   ENDIF
-  
+
   ! Deallocate fields of the Chemistry State object
   CALL Cleanup_State_Chm( State_Chm, RC )
   IF ( RC /= GC_SUCCESS ) THEN
