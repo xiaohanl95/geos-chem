@@ -1532,8 +1532,8 @@ CONTAINS
             mass_S_SO2_r1 = mass_S_SO2_r1 + D_mass_plume
             mass_S_SO2_1_1 = mass_S_SO2_1_1 + mass_plume
             WRITE (6, *) "(Debug: BZ) ID_SO2 is", i_species 
-            write(6,*) 'debug (BZ): SO2mass middle physics 2: ', mass_plume * V_grid_2D
-            write(6,*) 'debug (BZ): SO2mass middle physics 3: ', mass_plume_new * V_grid_2D
+            write(6,*) 'debug (BZ): SO2mass middle physics 2: ', mass_plume 
+            write(6,*) 'debug (BZ): SO2mass middle physics 3: ', mass_plume_new 
             ! mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
           IF (i_species .eq. id_SO4) THEN
@@ -1542,13 +1542,13 @@ CONTAINS
             WRITE (6, *) "(Debug: BZ) ID_SO4 is", i_species          
             mass_S_SO4_r1 = mass_S_SO4_r1 + D_mass_plume
             mass_S_SO4_1_1 = mass_S_SO4_1_1 + mass_plume
-            write(6,*) 'debug (BZ): SO4mass middle physics 2: ', mass_plume * V_grid_2D
-            write(6,*) 'debug (BZ): SO4mass middle physics 3: ', mass_plume_new * V_grid_2D
+            write(6,*) 'debug (BZ): SO4mass middle physics 2: ', mass_plume 
+            write(6,*) 'debug (BZ): SO4mass middle physics 3: ', mass_plume_new 
             ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
         ENDDO ! DO i_species=1,n_species,1
-    WRITE (6, *) "(Debug: BZ) ID_SO4 is: ", id_SO4
-    WRITE (6, *) "(Debug: BZ) ID_SO2 is: ", id_SO2
+    !WRITE (6, *) "(Debug: BZ) ID_SO4 is: ", id_SO4
+    !WRITE (6, *) "(Debug: BZ) ID_SO2 is: ", id_SO2
 
     mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
