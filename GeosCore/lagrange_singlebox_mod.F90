@@ -91,7 +91,7 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp) 		          :: mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, mass_S_SO2_4 
   REAL(fp) 		          :: mass_S_SO4_b, mass_S_SO4_inj, mass_S_SO4_r1, mass_S_SO4_r2 
   REAL(fp) 		          :: mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3, mass_S_SO4_4
-  REAL(fp) 		          :: mass_S_SO2_1_1, mass_S_SO4_1_1
+  REAL(fp) 		          :: mass_S_SO2_1_1, mass_S_SO4_1_1, mass_S_SO2_1_2, mass_S_SO4_1_2
 
   ! Diagnostic file names, initialized in lagr_init
   CHARACTER(LEN=255)    :: file_Smass
@@ -260,26 +260,28 @@ CONTAINS
     n_x_mid2                   =      (n_x_max2+1)/2 
     n_y_mid2                   =      (n_y_max2+1)/2
 
-    mass_S_SO2_b               =      0
-    mass_S_SO2_1               =      0
-    mass_S_SO2_2               =      0
-    mass_S_SO2_3               =      0
-    mass_S_SO2_4               =      0
-    mass_S_SO2_inj             =      0
-    mass_S_SO2_r1              =      0
-    mass_S_SO2_r2              =      0
+    mass_S_SO2_b               =      0.0_fp
+    mass_S_SO2_1               =      0.0_fp
+    mass_S_SO2_2               =      0.0_fp
+    mass_S_SO2_3               =      0.0_fp
+    mass_S_SO2_4               =      0.0_fp
+    mass_S_SO2_inj             =      0.0_fp
+    mass_S_SO2_r1              =      0.0_fp
+    mass_S_SO2_r2              =      0.0_fp
     
-    mass_S_SO4_b               =      0
-    mass_S_SO4_1               =      0
-    mass_S_SO4_2               =      0
-    mass_S_SO4_3               =      0
-    mass_S_SO4_4               =      0
-    mass_S_SO4_inj             =      0
-    mass_S_SO4_r1              =      0
-    mass_S_SO4_r2              =      0
+    mass_S_SO4_b               =      0.0_fp
+    mass_S_SO4_1               =      0.0_fp
+    mass_S_SO4_2               =      0.0_fp
+    mass_S_SO4_3               =      0.0_fp
+    mass_S_SO4_4               =      0.0_fp
+    mass_S_SO4_inj             =      0.0_fp
+    mass_S_SO4_r1              =      0.0_fp
+    mass_S_SO4_r2              =      0.0_fp
 
-    mass_S_SO2_1_1             =      0
-    mass_S_SO4_1_1             =      0
+    mass_S_SO2_1_1             =      0.0_fp
+    mass_S_SO4_1_1             =      0.0_fp
+    mass_S_SO2_1_2             =      0.0_fp
+    mass_S_SO4_1_2             =      0.0_fp
 
     Dt = GET_TS_DYN()
     N_parcel = NINT(Aircraft_speed * Dt / Length_init)
@@ -732,7 +734,16 @@ CONTAINS
         !CALL GC_Error( ErrMsg, RC, ThisLoc )
         CALL ERROR_STOP (ErrMsg, ThisLoc)
       ENDIF
-
+      
+      mass_S_SO2_2 = 0.0_fp
+      mass_S_SO2_3 = 0.0_fp 
+      mass_S_SO2_4 = 0.0_fp 
+      mass_S_SO2_1_1 = 0.0_fp 
+            
+      mass_S_SO4_2 = 0.0_fp
+      mass_S_SO4_3 = 0.0_fp
+      mass_S_SO4_4 = 0.0_fp
+      mass_S_SO4_1_1 = 0.0_fp
       CALL plume_physics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
       ! Plume physical evolution: 
       ! Update plume lifetime 
