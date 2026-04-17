@@ -4087,6 +4087,18 @@ CONTAINS
     ENDIF
     Input_Opt%PlumeGrid2d_dy = v_real
     !------------------------------------------------------------------------
+    ! Get critical day
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%critical_day"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Critical_day = v_real
+    !------------------------------------------------------------------------
     ! Get number of sources
     !------------------------------------------------------------------------
     key   = "Plume_sources%num_of_sources"

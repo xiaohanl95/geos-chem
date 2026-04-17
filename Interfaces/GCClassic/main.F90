@@ -2140,7 +2140,7 @@ PROGRAM GEOS_Chem
   !==========================================================================
 9999 CONTINUE
   ! BZ dissolve all existing plume
-  CALL plume_dissolve_all(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+  ! CALL plume_dissolve_all(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
   
   ! Skip operations when running in dry-run mode
   IF ( notDryRun ) THEN
