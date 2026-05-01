@@ -87,17 +87,28 @@ MODULE Lagrange_singlebox_Mod
   INTEGER                               :: id_NK01, id_SF01, id_AW01,  id_H2SO4
   
   ! Species ID flags correspond to Plume species
-  INTEGER, PARAMETER                    :: nspc_p            = 6 ! Num of species in Plume
-  INTEGER, PARAMETER                    :: id_SO2_p          = 1
-  INTEGER, PARAMETER                    :: id_SO4_p          = 2
-  INTEGER, PARAMETER                    :: id_OH_p           = 3
-  INTEGER, PARAMETER                    :: id_HO2_p          = 4
-  INTEGER, PARAMETER                    :: id_PH2SO4_p       = 5
-  INTEGER, PARAMETER                    :: id_PASVLA_p       = 6
-  CHARACTER(LEN=16), PARAMETER          :: spc_names_p(*)    = [ 'SO2', 'SO4', 'OH', 'HO2', 'PH2SO4','PASVLA' ] ! Uppercase
+  INTEGER, PARAMETER                    :: nspc_p_bulk           = 6 ! Num of species in Plume, bulk
+  INTEGER, PARAMETER                    :: nspc_p_tomas_tracer   = 3 ! Num of tomas tracer type in Plume, currently consider NK, SF, AW
+  INTEGER, PARAMETER                    :: id_SO2_p              = 1
+  INTEGER, PARAMETER                    :: id_SO4_p              = 2
+  INTEGER, PARAMETER                    :: id_OH_p               = 3
+  INTEGER, PARAMETER                    :: id_HO2_p              = 4
+  INTEGER, PARAMETER                    :: id_PH2SO4_p           = 5
+  INTEGER, PARAMETER                    :: id_PASVLA_p           = 6
+  INTEGER, PARAMETER                    :: id_NH4_p              = 7
+  INTEGER, PARAMETER                    :: id_NH3_p              = 8
+  INTEGER, PARAMETER                    :: id_H2SO4_p            = 9
+  INTEGER, PARAMETER                    :: id_H2O_p              = 10
+  INTEGER, PARAMETER                    :: id_NK01_p             = 11
+  INTEGER, PARAMETER                    :: id_SF01_p             = 12
+  INTEGER, PARAMETER                    :: id_AW01_p             = 13 ! TOMAS tracer need to in this order: NK, ..., ..., AW
+  CHARACTER(LEN=16), PARAMETER          :: spc_names_p(*)        = [ 'SO2', 'SO4', 'OH', &
+                                  'HO2', 'PH2SO4','PASVLA','NH4','NH3', 'H2SO4','H2O', 'NK01','SF01','AW01' ] ! Uppercase
 
   ! Other variables
   INTEGER               :: nspc_GC ! Num of species in GEOS-Chem
+  INTEGER               :: nspc_p ! Num of species in Plume
+  INTEGER               :: nBins  ! Number of TOMAS bins
   INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
   INTEGER               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
   REAL(fp)		          :: Entropy0	 ! perfect entropy without diffusion
@@ -146,7 +157,7 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp), PARAMETER       :: Dissolve_critiria  = 10*0.01
   REAL(fp), PARAMETER       :: Volume_percent     = 30*0.01
   ! REAL(fp), PARAMETER       :: Critical_day       = 28.0         ! [day] ! Move this into geoschem_config.yml
-  REAL(fp), PARAMETER       :: Radical_exc_factor = 1.0          ! BZ: Add for Radical exchange after chemistry, real number between 0 and 1
+  REAL(fp), PARAMETER       :: Radical_exc_factor = 0.0          ! BZ: Add for Radical exchange after chemistry, real number between 0 and 1
 
   TYPE(Plume2d_list), POINTER :: Plume2d_tail, Plume2d_head
   TYPE(Plume1d_list), POINTER :: Plume1d_tail, Plume1d_head
@@ -212,6 +223,12 @@ CONTAINS
     Num_dissolve       =    0
 
     nspc_GC            =              State_Chm%nSpecies
+    nBins              =              State_Chm%nTomasBins
+  #ifdef TOMAS
+    nspc_p             =              10 + nspc_p_tomas_tracer * nBins
+  #else
+    nspc_p             =              nspc_p_bulk
+  #endif
     IIPAR              =              State_Grid%NX
     JJPAR              =              State_Grid%NY
     LLPAR              =              State_Grid%NZ
@@ -715,7 +732,7 @@ CONTAINS
                         SUM(Plume2d_new%CONCNT2d(:, :, id_SO2_p)) * Vgrid_2D 
                
                 mass_S_SO4_1 = mass_S_SO4_1 +  &
-                       SUM(Plume2d_new%CONCNT2d(:,:, id_SO2_p)) * Vgrid_2D 
+                       SUM(Plume2d_new%CONCNT2d(:,:, id_SO4_p)) * Vgrid_2D 
 
                 NULLIFY(Plume2d_new%next)
                 IF ( .NOT. ASSOCIATED(Plume2d_head) ) THEN
@@ -785,12 +802,20 @@ CONTAINS
     Spc                    =>   State_Chm%Species
     ThisLoc                =   ' -> at plume_model_box (in module GeosCore/lagrange_singlebox_mod.F90)'
 
-    id_SO4 =    Ind_('SO4')
-    id_SO2 =    Ind_('SO2')
-    id_OH  =    Ind_('OH')
-    id_HO2 =    Ind_('HO2')
-    id_PH2SO4 = Ind_('PH2SO4')
-    
+    id_SO4     =    Ind_('SO4')
+    id_SO2     =    Ind_('SO2')
+    id_OH      =    Ind_('OH')
+    id_HO2     =    Ind_('HO2')
+    id_PH2SO4  =    Ind_('PH2SO4')
+    id_NH3     =    Ind_('NH3')
+    id_NH4     =    Ind_('NH4')
+    id_O3      =    Ind_('O3')
+    id_H2O     =    Ind_('H2O')
+    id_H2SO4   =    Ind_('H2SO4')
+    id_NK01    =    Ind_('NK01')
+    id_SF01    =    Ind_('SF01')
+    id_AW01    =    Ind_('AW01')
+
     IF (use_lagrange .AND. plume_inject_on) THEN
 
       ! In theory, before plume injection, the unit should be kg/kg
@@ -1737,7 +1762,7 @@ CONTAINS
     
     
     INTEGER                       :: i_box, i_lon, i_lat, i_lev
-    INTEGER                       :: i_species, i_phot, i_kpp, i_rxn
+    INTEGER                       :: i_species, i_species_1,i_phot, i_kpp, i_rxn
     INTEGER                       :: i_x, i_y
     !INTEGER                       :: n_species 
     INTEGER                       :: Thread, IERR,  P, F, errorCount
@@ -1792,7 +1817,44 @@ CONTAINS
 
     ! Suppress printing out KPP error messages after this many errors occur
     INTEGER,     PARAMETER :: INTEGRATE_FAIL_TOGGLE = 20
+    !========================================================================
+    ! TOMAS in plume notes: Bingqing Zhang
+    ! - Temporary define TOMAS related variable here so that it can be moved
+    ! to a separate module if necessary
+    ! - For TOMAS, species need to be in unit: kg, convert before feeding to TOMAS array
+    ! - TOMAS species order (in Mk, Nk, Gc) is different from that used in Plume and GC
+    ! hard coded below: 1 SO4, 2, NH4, 3, H2O
+    ! - Temporarily set unused variable = -1
+    !========================================================================
+    INTEGER, PARAMETER   :: SRTSO4  = 1
+    INTEGER, PARAMETER   :: SRTNACL = -1
+    INTEGER, PARAMETER   :: SRTECOB = -1
+    INTEGER, PARAMETER   :: SRTECIL = -1
+    INTEGER, PARAMETER   :: SRTOCOB = -1
+    INTEGER, PARAMETER   :: SRTOCIL = -1
+    INTEGER, PARAMETER   :: SRTDUST = -1
+    INTEGER, PARAMETER   :: SRTNH4  = 2
+    INTEGER, PARAMETER   :: SRTH2O  = 3
+
+    INTEGER, PARAMETER   :: ICOMPHARD =  3 ! number of used variable in TOMAS
+    LOGICAL            :: COND, COAG, NUCL !<step5.1> switch for each process (win 4/8/06)
+
+    INTEGER            :: ibin
+
+    REAL*4             :: BOXVOL,  BOXMASS, TEMPTMS
+    REAL*4             :: PRES,    RHTOMAS
+    REAL(fp)           :: molwt
+    REAL(fp)           :: NH4bulk
+    REAL(fp)           ::  ionrate 
     
+    ! This variable is intend to use as a reference, when exchange species from TOMAS to plume
+    ! convert to original unit mole/cm3 and exchange with box_concnt_2D
+    ! REAL(fp), ALLOCATABLE         :: box_concnt_2D_kg(:,:,:) 
+    ! Initialization
+    ! Initialize switches for each microphysical process
+    COND = .TRUE.
+    COAG = .TRUE.
+    NUCL = .TRUE.
     !========================================================================
     ! plume_chem_microphysics begins here!
     ! New version solve simplified chemistry independently
@@ -1846,7 +1908,9 @@ CONTAINS
     mass_S_SO4_3 = 0.0_fp
 
     ALLOCATE(box_concnt_2D(n_x_max, n_y_max, nspc_p ))
-
+!#ifdef TOMAS
+    !ALLOCATE(box_concnt_2D_kg(n_x_max, n_y_max, nspc_p ))
+! #endif
     ! Set up integration convergence conditions and timesteps
     ! This is defined in gckpp_Global and set to be public
     ! ATOL = State_Chm%KPP_AbsTol   ! Absolute tolerance
@@ -1878,7 +1942,7 @@ CONTAINS
       Vgrid_EU        =  State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
       K_SO2_OH        =  RXNRATE_CONST_KPP(i_lon,i_lat,i_lev , 202)
       box_concnt_2D   =  Plume2d_curr%CONCNT2d
-      
+
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO2 ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO4 ', Spc(id_SO4)%Conc(i_lon,i_lat,i_lev)
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of OH ', Spc(id_OH)%Conc(i_lon,i_lat,i_lev)
@@ -1919,6 +1983,10 @@ CONTAINS
           box_concnt_2D(i_x,i_y,id_SO4_p)    = REAL( C_after_Chem(id_SO4_p), kind=fp )
           box_concnt_2D(i_x,i_y,id_HO2_p)    = REAL( C_after_Chem(id_HO2_p), kind=fp )
           box_concnt_2D(i_x,i_y,id_OH_p)     = REAL( C_after_Chem(id_OH_p), kind=fp )
+          box_concnt_2D(i_x,i_y,id_PH2SO4_p) = REAL( C_after_Chem(id_PH2SO4_p), kind=fp )
+          H2SO4_RATE_2D(i_x,i_y) = C_after_Chem(id_PH2SO4_p) / AVO * 98.e-3_fp * &
+                           (Vgrid_2D) / Dt  ! kg s-1 box-1
+
           !Plume2d_curr%CONCNT2d(i_x,i_y,id_PH2SO4) = REAL( C_after_integrate(id_PH2SO4), kind=fp )
         ENDDO
       ENDDO
@@ -1941,9 +2009,206 @@ CONTAINS
       box_concnt_2D(:,:,id_HO2_p)   = full_exchange_conc * Radical_exc_factor
       Spc(id_HO2)%Conc(i_lon,i_lat,i_lev) = (mass_HO2 -SUM(box_concnt_2D(:,:,id_HO2_p))*Vgrid_2D ) / &
                                               Vgrid_EU
-      
+#ifdef TOMAS
+      !DO i_species = 1, nspc_p
+      !  spc_name = spc_names_p(i_species)
+      !  id_tracer   = Ind_(TRIM(spc_name))
+      !  molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
+      !  ! molec/cm3 -> kg
+      !  box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+      !ENDDO
+
+      ! TOMAS species unit should be in kg
+      ! GC, MK, NK
+      DO i_y = 1, n_y_max, 1
+        DO i_x = 1, n_x_max, 1
+          PRES    = State_Met%PMID(i_lon,i_lat,i_lev)*100.0 ! in Pa
+          TEMPTMS = State_Met%T(i_lon,i_lat,i_lev)
+          BOXMASS = State_Met%AD(i_lon,i_lat,i_lev)*Vgrid_2D/Vgrid_EU
+          RHTOMAS = State_Met%RH(i_lon,i_lat,i_lev)/ 1.e2
+          IF ( RHTOMAS > 0.99 ) RHTOMAS = 0.99
+          BOXVOL  = Vgrid_2D * 1.e6 !convert from m3 -> cm3
+          ! Initialize all condensible gas values to zero
+          ! Gc(srtso4) will remain zero until within cond_nuc where the
+          ! pseudo steady state H2SO4 concentration will be put in this place.
+          DO i_species=1, ICOMPHARD ! all tomas tracer - Nk, in here just SF and AW
+              Gc(i_species) = 0.e+0_fp
+          ENDDO
+          ! Swap Spc into Nk, Mk, Gc arrays
+          DO ibin = 1, nBins
+              ! Mol weight for Nk is 1
+              i_species_1 = id_NK01_p+(ibin-1)*nspc_p_tomas_tracer
+              NK(ibin) = box_concnt_2D(i_x,i_y,i_species_1)*Vgrid_2D/Avo/1.0E+3_fp
+              DO i_species = 1, ICOMPHARD-2 ! skip NH4 and H2O
+                i_species_1 = id_NK01_p+i_species+(ibin-1)*nspc_p_tomas_tracer
+                 spc_name = spc_names_p(id_NK01_p+i_species)
+                 id_tracer   = Ind_(TRIM(spc_name))
+                 molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
+                MK(ibin,i_species) = box_concnt_2D(i_x,i_y,i_species_1)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+
+                IF( IT_IS_NAN( MK(ibin,i_species) ) ) THEN
+                    PRINT *,'+++++++ Found NaN in AEROPHYS ++++++++'
+                    PRINT *,'Location (i_plume, i_x, i_y):',i_box,i_x,i_y,'Bin',ibin,'comp',spc_name
+                ENDIF
+
+              ENDDO
+              id_tracer   = Ind_('AW01')
+              molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
+              MK(ibin,SRTH2O) = box_concnt_2D(i_x,i_y,id_AW01_p+(ibin-1)*nspc_p_tomas_tracer)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+
+          ENDDO
+
+          ! Get NH4 mass from the bulk mass and scale to bin with sulfate
+          IF ( SRTNH4 > 0 ) THEN
+              id_tracer =GET_PLUME_SPC_ID('NH4')
+              NH4bulk = box_concnt_2D(i_x,i_y,id_tracer)
+              CALL NH4BULKTOBIN( MK(:,SRTSO4), NH4bulk, TRANSFER )
+              MK(1:nbins,SRTNH4) = TRANSFER(1:nbins)
+              Gc(SRTNH4) = box_concnt_2D(i_x,i_y,id_NH3_p)
+
+          ENDIF
+          ! Give it the pseudo-steady state value instead later (win,9/30/08)
+          !GC(SRTSO4) = Spc(id_H2SO4)%Conc(I,J,L)
+          
+          H2SO4rate_o = H2SO4_RATE_2D(i_x, i_y)  ! [kg s-1]
+          IF ( H2SO4rate_o .lt. 0.e0 ) THEN
+              Print*, 'Debug TOMAS: H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
+                  'i_x = ', i_x, 'i_y = ', i_y
+              H2SO4rate_o = 0.e+0_fp
+          ENDIF
+
+          ! nitrogen and sulfur mass checks
+          ! get the total mass of N
+          tot_n_1 = Gc(srtnh4)*14.e+0_fp/17.e+0_fp
+          do ibin=1,nbins
+              tot_n_1 = tot_n_1 + Mk(ibin,srtnh4)*14.e+0_fp/18.e+0_fp
+          enddo
+
+          ! get the total mass of S
+          tot_s_1 = H2SO4rate_o*Dt*32.e+0_fp/98.e+0_fp
+          do k=1,ibins
+              tot_s_1 = tot_s_1 + Mk(k,srtso4)*32.e+0_fp/96.e+0_fp
+          enddo
+
+          !Do water eqm at appropriate times
+          CALL EZWATEREQM( MK, RHTOMAS )
+
+          !Fix any inconsistencies in M/N distribution (because of advection)
+          CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+          !print *, 'mnfix in tomas_mod:533'
+          CALL MNFIX( NK, MK, ERRORSWITCH )
+          IF ( ERRORSWITCH ) THEN
+              PRINT *,'Aerophys: MNFIX found error at',I,J,L
+              CALL ERROR_STOP('AEROPHYS-MNFIX (1)','Enter microphys')
+          ENDIF
 
 
+                 ! Before doing any cond/nucl/coag, check if there's any aerosol in
+       ! the current box
+       TOT_NK = 0.e+0_fp
+       TOT_MK = 0.e+0_fp
+       do k = 1, ibins
+          TOT_NK = TOT_NK + Nk(K)
+          do jc=1, icomp-idiag
+             TOT_MK = TOT_MK + Mk(k,jc)
+          enddo
+       enddo
+
+       if(TOT_NK .lt. 1.e-10_fp) then
+          if( .NOT. SPINUP(5.0)) then
+             print *,'No aerosol in box ',I,J,L,'-->SKIP'
+          endif
+          CYCLE
+       endif
+
+       !-------------------------------------
+       ! Condensation and nucleation (coupled)
+       !-------------------------------------
+       IF ( COND .AND. NUCL .AND. H2SO4rate_o > 0.e0_fp) THEN
+
+          !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
+
+          CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+          CALL COND_NUC(Nk,Mk,Gc,Nkout,Mkout,Gcout,fn,fn1, &
+                        H2SO4rate_o,adt,num_iter,Nknuc,Mknuc,Nkcond,Mkcond, &
+                        ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, PRES, &
+                        RHTOMAS, ERRORSWITCH, l)
+
+          IF ( ERRORSWITCH ) THEN
+             PRINT *,'Aerophys: found error at',I,J,L
+             CALL ERROR_STOP('AEROPHYS','After cond_nuc')
+          ENDIF
+
+          ERR_VAR = 'Gcout'
+          ERR_MSG = 'After COND_NUC'
+          ! check for NaN and Inf (win, 10/4/08)
+          do jc = 1, icomp-1
+             ERR_IND(1) = I
+             ERR_IND(2) = J
+             ERR_IND(3) = L
+             ERR_IND(4) = 0
+!             IF (SPINUP(14.0) .and. Gcout(jc) /= Gcout(jc) ) THEN
+             IF( SPINUP(14.0) .AND. IT_IS_NAN( Gcout(jc) ) ) THEN
+                 Gcout(jc) = 0.0e+0_fp ! reset Nan to zero during spinup, bc 18/12/23
+                 print*,'Reset Gcout NaN to zero at ',I,J,L
+             ELSEIF ( SPINUP(14.0) .AND. .not. IT_IS_FINITE( Gcout(jc) ) ) THEN
+                 Gcout(jc) = 0.0e+0_fp ! reset Inf to zero during spinup, bc 18/12/23
+                 print*,'Reset Gcout Inf to zero at ',I,J,L
+             ELSE
+             call check_value( Gcout(jc), ERR_IND, ERR_VAR, ERR_MSG )
+             ENDIF
+             !if( IT_IS_FINITE(Gcout(jc))) then
+             !   print *,'xxxxxxxxx Found Inf in Gcout xxxxxxxxxxxxxx'
+             !   print *,'Location ',I,J,L, 'comp',jc
+             !   call debugprint( Nkout, Mkout, i,j,l,'After COND_NUC')
+             !   stop
+             !endif
+          enddo
+
+          !get nucleation diagnostic
+          DO N = 1, IBINS
+             NK(N) = NKnuc(N)
+             DO JC = 1, ICOMP
+                MK(N,JC) = MKnuc(N,JC)
+             ENDDO
+          ENDDO
+
+
+          !-----------------------------
+          ! Coagulation
+          !-----------------------------
+
+          ! Do water eqm at appropriate times
+       CALL EZNH3EQM( Gc, Mk )
+       CALL EZWATEREQM ( MK, RHTOMAS )
+
+       ! Swap Nk, Mk, and Gc arrays back to Spc
+
+       ! Calculate NH3 gas lost to aerosol phase as NH4
+
+       ! Update the bulk NH4 aerosol species
+
+       
+        ENDDO
+      ENDDO
+
+      DO i_species = 1, nspc_p
+        spc_name = spc_names_p(i_species)
+        id_tracer   = Ind_(TRIM(spc_name))
+        molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
+        !  kg -> 
+        box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+      ENDDO
+
+#endif
+      !========================================================================
+      ! Temporary implement TOMAS microphysics here so it can be moved to 
+      ! a separate module if necessary
+      ! TOMAS module: AEROPHYS                            
+      !========================================================================
+      !
+
+                                            
 !       DO i_y = 1, n_y_max, 1
 !         DO i_x = 1, n_x_max, 1
 !       ! Some species (counter or diagnostic species) needed to be zero out before solving KPP chemistry
@@ -2562,6 +2827,7 @@ CONTAINS
 
     ! deallocate unused space
     IF(allocated(box_concnt_2D)) deallocate(box_concnt_2D)
+    IF(allocated(box_concnt_2D_kg)) deallocate(box_concnt_2D_kg)
     IF(ASSOCIATED(Spc)) nullify(Spc)
   END SUBROUTINE plume_chem_microphysics
 
@@ -4937,4 +5203,254 @@ FUNCTION GET_PLUME_SPC_ID(name) RESULT(id)
     END IF
   END DO
 END FUNCTION GET_PLUME_SPC_ID
+
+! TOMAS related subrontine and functions below
+! ----------------------------------------------------------------------------
+! ----------------------------------------------------------------------------
+! Copied from GEOS-Chem TOMAS_mod.F90
+! !IROUTINE: nh4bulktobin
+!
+! !DESCRIPTION: Subroutine NH4BULKTOBIN takes the bulk ammonium aerosol from
+!  GEOS-Chem and fraction it to each bin according to sulfate mole fraction in
+!  each bin
+!  Written by Win Trivityanurak, Sep 26, 2008
+!  .
+!  Make sure that we work with mass or mass conc.
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE NH4BULKTOBIN( MSULF, NH4B, MAMMO )
+!
+! !INPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(IN)   :: MSULF(nbins)  ! size-resolved sulfate [kg]
+    REAL(fp),  INTENT(IN)   :: NH4B          ! Bulk NH4 mass [kg]
+!
+! !OUTPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(OUT)  :: MAMMO(nbins)  ! size-resolved NH4 [kg]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    INTEGER                 :: K
+    REAL(fp)                :: TOTMASS, NH4TEMP
+
+    !=================================================================
+    ! NH4BULKTOBIN begins here
+    !=================================================================
+
+    MAMMO(:) = 0.e+0_fp
+
+    ! Sum the total sulfate
+    TOTMASS = 0.e+0_fp
+    DO K = 1, nbins
+       TOTMASS = TOTMASS + MSULF(K)
+    ENDDO
+
+    IF ( TOTMASS .eq. 0.e+0_fp ) RETURN
+
+    ! Limit the amount of NH4 entering TOMAS calculation
+    ! if it is very NH4-rich, just limit the amount to balance
+    ! existing 30-bin-summed SO4 assuming (NH4)2SO4 in such case
+    !  (NH4)2 mass = (SO4)mass / 96. * 2. * 18. = 0.375*(SO4)mass
+    ! (win, 9/28/08)
+    NH4TEMP = NH4B
+    IF ( NH4B/TOTMASS > 0.375e+0_fp ) &  !make sure we use mass ratio
+         NH4TEMP = 0.375e+0_fp * TOTMASS
+
+    ! Calculate ammonium aerosol scale to each bin
+    DO K = 1, nbins
+       MAMMO(K) = MSULF(K) / TOTMASS * NH4TEMP
+    ENDDO
+
+    !write(777,*) NH4B/TOTMASS
+
+    RETURN
+
+  END SUBROUTINE NH4BULKTOBIN
+!EOC
+
+!  Copy from GEOS-Chem tomas_mod.F90
+!BOP
+!
+! !IROUTINE: ezwatereqm
+!
+! !DESCRIPTION: WRITTEN BY Peter Adams, March 2000
+!     .
+!     This routine uses the current RH to calculate how much water is
+!     in equilibrium with the aerosol.  Aerosol water concentrations
+!     are assumed to be in equilibrium at all times and the array of
+!     concentrations is updated accordingly.
+!     .
+!     Introduced to GEOS-CHEM by Win Trivitayanurak. May 8, 2006.
+!     This file is replacing the old ezwatereqm that was not compatible
+!     with multicomponent aerosols.  The new ezwatereqm use external
+!     functions to do ISORROPIA-result curve fitting for each aerosol
+!     component.
+!     WARNING :
+!      *** Watch out for the new aerosol species added in the future!
+!     .
+!     This version of the routine works for sulfate and sea salt
+!     particles.  They are assumed to be externally mixed and their
+!     associated water is added up to get total aerosol water.
+!     wr is the ratio of wet mass to dry mass of a particle.  Instead
+!     of calling a thermodynamic equilibrium code, this routine uses a
+!     simple curve fits to estimate wr based on the current humidity.
+!     The curve fit is based on ISORROPIA/HETP results for ammonium bisulfate
+!     at 273 K and sea salt at 273 K.
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE EZWATEREQM( Mke, RHTOMAS )
+!
+! !INPUT PARAMETERS:
+!
+    REAL*4,  INTENT(IN)    :: RHTOMAS
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    REAL(fp),INTENT(INOUT) :: Mke(nbins,ICOMPHARD)
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+
+!------------------------------------------------------------------------------
+!BOC
+! !LOCAL VARIABLES:
+!
+    INTEGER             :: k, j
+    REAL(fp)            :: so4mass, naclmass, ocilmass
+    REAL(fp)            :: wrso4, wrnacl, wrocil
+    REAL(fp)            :: rhe
+
+    !========================================================================
+    ! EZWATEREQM begins here!
+    !========================================================================
+
+    rhe=100.e+0_fp*rhtomas
+    if (lowRH == 1) THEN !JKodros RH switch
+       if (rhe .gt. 90.e+0_fp) rhe=90.e+0_fp
+    ELSE
+       if (rhe .gt. 99.e+0_fp) rhe=99.e+0_fp
+    END IF !JKodros RH switch
+    if (rhe .lt. 1.e+0_fp) rhe=1.e+0_fp
+
+    do k=1,nbins
+
+       so4mass=Mke(k,srtso4)*1.2  !1.2 converts kg so4 to kg nh4hso4
+       wrso4=waterso4(rhe)
+
+       ! Add condition for srtnacl in case of running so4 only. (win, 5/8/06)
+       if (srtnacl.gt.0) then
+          naclmass=Mke(k,srtnacl) !already as kg nacl - no conv necessary
+          wrnacl=waternacl(rhe)
+       else
+          naclmass = 0.e+0_fp
+          wrnacl = 1.e+0_fp
+       endif
+
+       if (srtocil.gt.0) then
+          ocilmass=Mke(k,srtocil) !already as kg ocil - no conv necessary
+          wrocil=waterocil(rhe)
+       else
+          ocilmass = 0.e+0_fp
+          wrocil = 1.e+0_fp
+       endif
+
+       Mke(k,srth2o)=so4mass*(wrso4-1.e+0_fp)+naclmass &
+                     *(wrnacl-1.e+0_fp) &
+                     +ocilmass*(wrocil-1.e+0_fp)
+
+    enddo
+
+    RETURN
+
+  END SUBROUTINE EZWATEREQM
+
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: waterso4
+!
+! !DESCRIPTION: Function WATERSO4 uses the current RH to calculate how much
+!  water is in equilibrium with the sulfate.  Aerosol water concentrations are
+!  assumed to be in equilibrium at all times and the array of concentrations is
+!  updated accordingly.
+!   Introduced to GEOS-CHEM by Win Trivitayanurak. 8/6/07
+!   Adaptation of ezwatereqm used in size-resolved sulfate only sim
+!   November, 2001
+!   ezwatereqm WRITTEN BY Peter Adams, March 2000
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION WATERSO4( RHE ) RESULT( VALUE )
+!
+! !INPUT PARAMETERS:
+!
+    REAL(fp) :: RHE ! Relative humidity (0-100 scale)
+!
+! !RETURN VALUE:
+!
+    REAL(fp) :: VALUE
+
+! !REMARKS:
+!  waterso4 is the ratio of wet mass to dry mass of a particle.  Instead
+!  of calling a thermodynamic equilibrium code, this routine uses a
+!  simple curve fit to estimate wr based on the current humidity.
+!  The curve fit is based on ISORROPIA results for ammonium bisulfate
+!  at 273 K.
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+
+    !=================================================================
+    ! WATERSO4 begins here!
+    !=================================================================
+
+    if (rhe .gt. 99.) rhe=99.
+    if (rhe .lt. 1.) rhe=1.
+
+    if (rhe .gt. 96.) then
+       value=0.7540688*rhe**3-218.5647*rhe**2+21118.19*rhe-6.801999e5
+    else
+       if (rhe .gt. 91.) then
+          value=8.517e-2*rhe**2 -15.388*rhe +698.25
+       else
+          if (rhe .gt. 81.) then
+             value=8.2696e-3*rhe**2 -1.3076*rhe +53.697
+          else
+             if (rhe .gt. 61.) then
+                value=9.3562e-4*rhe**2 -0.10427*rhe +4.3155
+             else
+                if (rhe .gt. 41.) then
+                   value=1.9149e-4*rhe**2 -8.8619e-3*rhe +1.2535
+                else
+                   value=5.1337e-5*rhe**2 +2.6266e-3*rhe +1.0149
+                endif
+             endif
+          endif
+       endif
+    endif
+
+    !check for error
+    if (value .gt. 30.) then
+       write(*,*) 'ERROR in waterso4'
+       write(*,*) rhe,value
+       STOP
+    endif
+
+  END FUNCTION WATERSO4
 END MODULE Lagrange_singlebox_Mod
