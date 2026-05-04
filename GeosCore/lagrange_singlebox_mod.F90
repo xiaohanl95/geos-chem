@@ -23,7 +23,7 @@
 ! One possible model logic:
 ! The PiG state stores only concentration anomaly relative to the current
 ! Eulerian background. This is intentional. Some species are strongly coupled
-! to the full chemical mechanism but are not intended to evolve as an
+! to the full chemical mechanism but USE ERROR_MOare not intended to evolve as an
 ! independent long-memory plume reservoir. Therefore chemistry is solved on
 ! reconstructed absolute concentrations, and the result is then converted back
 ! to anomaly with respect to the updated background state.
@@ -44,11 +44,12 @@ MODULE Lagrange_singlebox_Mod
   USE ERROR_MOD
   USE ERRCODE_MOD
   USE PhysConstants,   ONLY : PI, Re, g0, AIRMW, AVO, BOLTZ
-  USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
-  USE TIME_MOD,        ONLY : ITS_TIME_FOR_EXIT
+  !USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
+  !USE TIME_MOD,        ONLY : ITS_TIME_FOR_EXIT, GET_TS_DYN, GET_TAU, GET_TAUb
+  !USE TIME_MOD
   USE UNITCONV_MOD    
   USE INPUT_OPT_MOD,   ONLY : PlumeSource_t
-  USE gckpp_Parameters, ONLY: NREACT
+  ! USE gckpp_Parameters, ONLY: NREACT, NSPEC
 
   IMPLICIT NONE
   PRIVATE
@@ -105,6 +106,11 @@ MODULE Lagrange_singlebox_Mod
   CHARACTER(LEN=16), PARAMETER          :: spc_names_p(*)        = [ 'SO2', 'SO4', 'OH', &
                                   'HO2', 'PH2SO4','PASVLA','NH4','NH3', 'H2SO4','H2O', 'NK01','SF01','AW01' ] ! Uppercase
 
+  ! hard-coded reaction id
+  ! 202 is the reaction ID of SO2 + OH -> H2SO4 in fullchem KPP, need to adjust if using different mechanism or more species 
+  INTEGER, PARAMETER    :: SO2_OH_RXN_ID = 202 
+  
+  
   ! Other variables
   INTEGER               :: nspc_GC ! Num of species in GEOS-Chem
   INTEGER               :: nspc_p ! Num of species in Plume
@@ -112,7 +118,7 @@ MODULE Lagrange_singlebox_Mod
   INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
   INTEGER               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
   REAL(fp)		          :: Entropy0	 ! perfect entropy without diffusion
-  INTEGER               :: IIPAR, JJPAR, LLPAR
+  INTEGER               :: NX_GC, NY_GC, NZ_GC
   INTEGER               :: n_x_mid, n_y_mid, n_x_mid2, n_y_mid2 
   INTEGER               :: n_x_max2, n_y_max2 
   INTEGER               :: n_slab_25, n_slab_50, n_slab_75
@@ -171,16 +177,40 @@ MODULE Lagrange_singlebox_Mod
   real(fp), parameter       :: Kchem = 1.0e-20_fp ! chemical reaction rate
   ! use Kchem = 1.0e-20_fp for >1 year simulation
   !-------------------------------------------------------------
+
+  !-------------------------------------------------------------
+  ! Global variable for TOMAS-related processes
+  INTEGER, PARAMETER   :: SRTSO4  = 1
+  INTEGER, PARAMETER   :: SRTNACL = -1
+  INTEGER, PARAMETER   :: SRTECOB = -1
+  INTEGER, PARAMETER   :: SRTECIL = -1
+  INTEGER, PARAMETER   :: SRTOCOB = -1
+  INTEGER, PARAMETER   :: SRTOCIL = -1
+  INTEGER, PARAMETER   :: SRTDUST = -1
+  INTEGER, PARAMETER   :: SRTNH4  = 2
+  INTEGER, PARAMETER   :: SRTH2O  = 3
+
+  INTEGER, PARAMETER   :: ICOMPHARD =  3 ! number of used variable in TOMAS, not include Nk
+  ! !PUBLIC DATA MEMBERS:
+  INTEGER  :: bin_nuc = 1, tern_nuc = 1  ! Switches for nucleation type.
+  INTEGER  :: act_nuc = 0 ! in BL
+  INTEGER  :: ion_nuc = 0 ! 1 for modgil, 2 for Yu
+  INTEGER  :: lowRH = 1    !This is to match AW more with AERONET (JKODROS 6/15)
+  ! Arrays
+  REAL(fp), SAVE,   ALLOCATABLE, TARGET :: Xk(:)
+  ! REAL*4,   SAVE,   ALLOCATABLE :: MOLWT(:)
+  REAL(fp), ALLOCATABLE         :: AVGMASS(:)       ! Average mass per particle mid-range of size bin [kg/no.]
+
 CONTAINS
   SUBROUTINE lagrange_init_box(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
 
-    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE Input_Opt_Mod,   ONLY : OptInput
     USE State_Met_Mod,   ONLY : MetState
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Grid_Mod,  ONLY : GrdState
     USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
-    USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
+    !USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
     USE InquireMod,      ONLY : findFreeLun
     USE GcKpp_Parameters,           ONLY : NREACT, NSPEC
 
@@ -193,13 +223,13 @@ CONTAINS
     ! Pointers
     TYPE(SpcConc), POINTER                :: Spc(:)
     
-    INTEGER                       :: i_box, i_slab
+    INTEGER                       :: i_box, i_slab, ibin
     INTEGER                       :: ii, jj, kk
     INTEGER                       :: id_tracer, N
-    INTEGER                       :: i_lon, i_lat, i_lev            !1:IIPAR
+    INTEGER                       :: i_lon, i_lat, i_lev            !1:NX_GC
     INTEGER                       :: previous_units, previous_units_temp
-    
     INTEGER                       :: IOS
+
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: FILENAME, FileEntropy, File996
     CHARACTER(LEN=255)            :: FILENAME2, FILENAME3
@@ -210,6 +240,7 @@ CONTAINS
     REAL(fp)                      :: curr_lon, curr_lat, curr_lev
     REAL(fp)                      :: Dt
     REAL(fp)                      :: plume_len_deg, plume_rem_deg, add_deg 
+    REAL(fp)                      :: Mo
     REAL(fp), PARAMETER           :: eps = 1.0e-10  
 
     RC                 =   GC_SUCCESS
@@ -229,9 +260,9 @@ CONTAINS
   #else
     nspc_p             =              nspc_p_bulk
   #endif
-    IIPAR              =              State_Grid%NX
-    JJPAR              =              State_Grid%NY
-    LLPAR              =              State_Grid%NZ
+    NX_GC              =              State_Grid%NX
+    NY_GC              =              State_Grid%NY
+    NZ_GC              =              State_Grid%NZ
     DX                 =              State_Grid%DX
     DY                 =              State_Grid%DY
     X_edge             =>             State_Grid%XEdge(:,1) 
@@ -239,27 +270,27 @@ CONTAINS
     P_edge             =>             State_Met%PEDGE(1,1,:) 
     X_edge2            =              X_edge(2)
     Y_edge2            =              Y_edge(2)
-    X_mid              =>             State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! IIPAR ! new
+    X_mid              =>             State_Grid%XMid(:,1) ! Grid box longitude [degrees] ! XMID(:,1,1)   ! NX_GC ! new
     Y_mid              =>             State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
     P_mid              =>             State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)
     
     Write (6, *) "Debug: (BZ) Num of reactions from KPP is: ", NREACT
 
-    ALLOCATE( RXNRATE_CONST_KPP(IIPAR, JJPAR, LLPAR, NREACT ), STAT=RC )
+    ALLOCATE( RXNRATE_CONST_KPP(NX_GC, NY_GC, NZ_GC, NREACT ), STAT=RC )
     IF (RC /= 0) THEN
         errMsg = 'Error allocating RXNRATE_CONST_KPP'
         CALL ERROR_STOP( errMsg, thisLoc)
         RETURN
     ENDIF
 
-    ALLOCATE( SpcConc_BEFORE_KPP(IIPAR, JJPAR, LLPAR, NSPEC ), STAT=RC )
+    ALLOCATE( SpcConc_BEFORE_KPP(NX_GC, NY_GC, NZ_GC, NSPEC ), STAT=RC )
     IF (RC /= 0) THEN
         errMsg = 'Error allocating SpcConc_BEFORE_KPP'
         CALL ERROR_STOP( errMsg, thisLoc)
         RETURN
     ENDIF
 
-    ALLOCATE( SpcConc_AFTER_KPP(IIPAR, JJPAR, LLPAR, NSPEC ), STAT=RC )
+    ALLOCATE( SpcConc_AFTER_KPP(NX_GC, NY_GC, NZ_GC, NSPEC ), STAT=RC )
     IF (RC /= 0) THEN
         errMsg = 'Error allocating SpcConc_AFTER_KPP'
         CALL ERROR_STOP( errMsg, thisLoc)
@@ -382,6 +413,39 @@ CONTAINS
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
     CLOSE(File_Smass_IU)
 
+    !-------------------------------------------------
+    ! Initialization process for TOMAS
+    ALLOCATE( Xk( nBins+1 ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'Xk [TOMAS] in plume' )
+    Xk(:) = 0e+0_fp
+    ALLOCATE( AVGMASS( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'AVGMASS [TOMAS] in plume' )
+    AVGMASS(:) = 0e+0_fp
+#if defined(TOMAS40)
+    Mo = 1.0e-21_fp*2.e+0_fp**(-10)
+#elif defined(TOMAS15)
+    Mo = 1.0e-21_fp*4.e+0_fp**(-3)
+#else
+    Mo = 1.0e-21_fp
+#endif
+#if defined(TOMAS12) || defined(TOMAS15)
+    DO ibin = 1, nBins + 1
+       if(ibin.lt.nBins)then
+          xk(ibin)=Mo * 4.e+0_fp**(ibin-1) !mass quadrupling
+       else
+          xk(ibin)=xk(ibin-1) * 32.e+0_fp
+       endif
+    ENDDO
+#else
+    DO ibin = 1, nBins + 1
+       Xk( ibin ) = Mo * 2.e+0_fp ** ( ibin-1 )
+    ENDDO
+#endif
+#ifdef TOMAS
+    DO ibin = 1, nBins
+       AVGMASS( ibin ) = sqrt(Xk(ibin)*Xk(ibin+1))
+    ENDDO
+#endif
     ! Return if there was an error opening the file
     ! IF ( IOS /= 0 ) THEN
         ! Define error message
@@ -423,16 +487,16 @@ CONTAINS
     !curr_lat    =  Plume_sources(1)%lat1
     !curr_lev    =  Plume_sources(1)%lev
     !i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
-    !if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-    !if(i_lon<1) i_lon=i_lon+IIPAR
+    !if(i_lon>NX_GC) i_lon=i_lon-NX_GC
+    !if(i_lon<1) i_lon=i_lon+NX_GC
     !WRITE(6,*) 'debug: ilon=', i_lon
     !i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
-    !if(i_lat>JJPAR) i_lat=JJPAR
+    !if(i_lat>NY_GC) i_lat=NY_GC
     !if(i_lat<1) i_lat=1
     !WRITE(6,*) 'debug: ilat=', i_lat
     !i_lev = Find_iPLev(curr_lev,P_edge)
     !WRITE(6,*) 'debug: ilev1=', i_lev
-    !if(i_lev>LLPAR) i_lev=LLPAR
+    !if(i_lev>NZ_GC) i_lev=NZ_GC
 
     !IF (use_lagrange) THEN
       
@@ -527,13 +591,13 @@ CONTAINS
   
   SUBROUTINE plume_inject_box(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
 
-    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE Input_Opt_Mod,   ONLY : OptInput
     USE State_Met_Mod,   ONLY : MetState
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Grid_Mod,  ONLY : GrdState
     USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD,        ONLY : GET_TS_DYN
-    USE UnitConv_Mod !,    ONLY : Convert_Spc_Units, MOLECULES_SPECIES_PER_CM3
+    ! USE UnitConv_Mod !,    ONLY : Convert_Spc_Units, MOLECULES_SPECIES_PER_CM3
    
 
     LOGICAL,        INTENT(IN)    :: am_I_Root   ! Are we on the root CPU
@@ -550,7 +614,7 @@ CONTAINS
     !REAL(fp)          :: X_edge2, Y_edge2
 
 
-    INTEGER                :: i_box, i_lon, i_lat, i_lev, i_species
+    INTEGER                :: i_box, i_lon, i_lat, i_lev, i_species, ibin
     INTEGER                :: nAdv, i_advect1
     INTEGER                :: id_tracer, id_tracer1
     INTEGER                :: previous_units, previous_units_temp
@@ -636,16 +700,16 @@ CONTAINS
                 box_lev    = Plume_sources(1)%lev
 
                 i_lon = Find_iLonLat(box_lon, DX, X_edge2)
-                if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-                if(i_lon<1) i_lon=i_lon+IIPAR
+                if(i_lon>NX_GC) i_lon=i_lon-NX_GC
+                if(i_lon<1) i_lon=i_lon+NX_GC
                 !WRITE(6,*) 'debug: ilon=', i_lon
                 i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
-                if(i_lat>JJPAR) i_lat=JJPAR
+                if(i_lat>NY_GC) i_lat=NY_GC
                 if(i_lat<1) i_lat=1
                 !WRITE(6,*) 'debug: ilat=', i_lat
                 i_lev = Find_iPLev(box_lev,P_edge)
                 !WRITE(6,*) 'debug: ilev1=', i_lev
-                if(i_lev>LLPAR) i_lev=LLPAR
+                if(i_lev>NZ_GC) i_lev=NZ_GC
                 ! instantly add injected species into Eulerian grid 
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
@@ -672,13 +736,13 @@ CONTAINS
                 Plume2d_new%LEV             = Plume_sources(1)%lev
                  
                 i_lon = Find_iLonLat(Plume2d_new%LON, DX, X_edge2)
-                if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-                if(i_lon<1) i_lon=i_lon+IIPAR
+                if(i_lon>NX_GC) i_lon=i_lon-NX_GC
+                if(i_lon<1) i_lon=i_lon+NX_GC
                 i_lat = Find_iLonLat(Plume2d_new%LAT, DY, Y_edge2)
-                if(i_lat>JJPAR) i_lat=JJPAR
+                if(i_lat>NY_GC) i_lat=NY_GC
                 if(i_lat<1) i_lat=1
                 i_lev = Find_iPLev(Plume2d_new%LEV,P_edge)
-                if(i_lev>LLPAR) i_lev=LLPAR
+                if(i_lev>NZ_GC) i_lev=NZ_GC
                 Plume2d_new%lat_ind = i_lat
                 Plume2d_new%lon_ind = i_lon
                 Plume2d_new%lev_ind = i_lev
@@ -704,6 +768,34 @@ CONTAINS
                 !mass_S_SO4_b             =      mass_S_SO4_b + Plume2d_new%MassRef2d(id_SO4)
 
                 ! pass background concentration
+#ifdef TOMAS
+                ! Read all bulk tracer and TOMAS tracer 01
+                DO i_species = 1, 10 + nspc_p_tomas_tracer
+                  spc_name = spc_names_p(i_species)
+                  id_tracer   = Ind_(TRIM(spc_name))
+                  Plume2d_new%CONCNT2d(:,:,i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
+                  Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) * &
+                                                              (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
+                ENDDO
+                ! Read TOMAS tracer 02, 03, ... nbins
+                ! In GEOS-Chem the order is tracer1_01, tracer2_02,tracer3_03
+                ! in plume model the order is designed to be tracer1_01, tracer2_01, ... , tracer1_02, tracer2_02...
+                DO i_species = 1, nspc_p_tomas_tracer
+                  ! The first tracer of the same species
+                  spc_name = spc_names_p(10 + i_species)
+                  DO ibin = 2, nBins
+                    ! Tracer in GEOS-Chem
+                    id_tracer1   = Ind_(TRIM(spc_name))+ ibin-1
+                    ! Tracer in plume
+                    id_tracer  = 10 + i_species + nspc_p_tomas_tracer * (ibin-1)
+
+                    Plume2d_new%CONCNT2d(:,:,id_tracer) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev)
+                    Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev) * &
+                                                                (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
+                  ENDDO
+                ENDDO
+                  
+#else
                 DO i_species = 1, nspc_p
                   spc_name = spc_names_p(i_species)
                   id_tracer   = Ind_(TRIM(spc_name))
@@ -711,7 +803,7 @@ CONTAINS
                   Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) * &
                                                               (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
                 ENDDO
-
+#endif
                 ! add tracer concentration
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
@@ -763,15 +855,15 @@ CONTAINS
 
   SUBROUTINE plume_model_box(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
   
-    USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
+    USE Input_Opt_Mod,   ONLY : OptInput
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Met_Mod,   ONLY : MetState
     USE Species_Mod,     ONLY : SpcConc
-    USE TIME_MOD,        ONLY : GET_TS_DYN
+    USE TIME_MOD,        ONLY : GET_TS_DYN, GET_TAU , GET_TAUb
     USE State_Grid_Mod,  ONLY : GrdState
     !USE State_Diag_Mod,           ONLY : DgnState
     !USE State_Diag_Mod,           ONLY : DgnMap
-    USE UnitConv_Mod
+    ! USE UnitConv_Mod
 
     LOGICAL, INTENT(IN)           :: am_I_Root
     TYPE(MetState), INTENT(IN)    :: State_Met
@@ -816,6 +908,8 @@ CONTAINS
     id_SF01    =    Ind_('SF01')
     id_AW01    =    Ind_('AW01')
 
+    WRITE(6,'(a)') 'debug (BZ): TAU = ',  GET_TAU(), 'TAUb = ', GET_TAUb()
+     
     IF (use_lagrange .AND. plume_inject_on) THEN
 
       ! In theory, before plume injection, the unit should be kg/kg
@@ -897,7 +991,7 @@ CONTAINS
   
   SUBROUTINE plume_mod_cleanup_box( RC)
 
-     USE ErrCode_Mod
+     ! USE ErrCode_Mod
 
     INTEGER, INTENT(OUT) :: RC          ! Success or failure?
 
@@ -926,7 +1020,8 @@ CONTAINS
           CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:SpcConc_AFTER_KPP', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF
-
+    IF(allocated(Xk)) deallocate(Xk)
+    IF(allocated(AVGMASS)) deallocate(AVGMASS)
 !
 !    if (allocated(box_lon))      deallocate(box_lon)
 !    if (allocated(box_lat))      deallocate(box_lat)
@@ -943,13 +1038,14 @@ CONTAINS
 
 
   SUBROUTINE plume_physics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+  ! All the use have been defined in host: Plume_box_model
   USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
   USE State_Chm_Mod,   ONLY : ChmState, Ind_
   USE State_Met_Mod,   ONLY : MetState
   USE Species_Mod,     ONLY : SpcConc
   USE TIME_MOD,        ONLY : GET_TS_DYN
   USE State_Grid_Mod,  ONLY : GrdState
-  USE UnitConv_Mod
+  !USE UnitConv_Mod
 
 !    USE GC_GRID_MOD,   ONLY : XEDGE, YEDGE
 !    USE CMN_SIZE_Mod,  ONLY : DLAT, DLON !new
@@ -1079,7 +1175,7 @@ CONTAINS
   Ptemp => State_Met%THETA     ! Potential temperature [K]
   T1    => State_Met%TMPU1     ! Temperature at start of timestep [K]
   T2    => State_Met%TMPU2     ! Temperature at end of timestep [K]
-  P_BXHEIGHT => State_Met%BXHEIGHT  ![IIPAR,JJPAR,KKPAR]
+  P_BXHEIGHT => State_Met%BXHEIGHT  ![NX_GC,NY_GC,KKPAR]
 
    mass_S_SO2_2 = 0.0_fp
    mass_S_SO4_2 = 0.0_fp   ! mass after physics
@@ -1137,7 +1233,7 @@ CONTAINS
       ! For vertical wind speed:
       ! pay attention for the polar region * * *
       !------------------------------------------------------------------
-      if(abs(curr_lat)>Y_mid(JJPAR))then
+      if(abs(curr_lat)>Y_mid(NY_GC))then
         curr_omeg = Interplt_wind_RLL_polar(omeg, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
       else
         curr_omeg = Interplt_wind_RLL(omeg, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
@@ -1148,8 +1244,8 @@ CONTAINS
 
       curr_pressure = box_lev + RK_Dt(Ki+1) * curr_omeg / 100.0
 
-      if(curr_pressure<P_mid(LLPAR)) &
-            curr_pressure = P_mid(LLPAR) !+ ( P_mid(LLPAR) - curr_pressure )
+      if(curr_pressure<P_mid(NZ_GC)) &
+            curr_pressure = P_mid(NZ_GC) !+ ( P_mid(NZ_GC) - curr_pressure )
       if(curr_pressure>P_mid(1)) &
             curr_pressure = P_mid(1) !- ( curr_pressure - P_mid(1) )
 
@@ -1184,7 +1280,7 @@ CONTAINS
       !------------------------------------------------------------------
       if(abs(curr_lat)>72.0)then
 
-        if(abs(curr_lat)>Y_mid(JJPAR))then 
+        if(abs(curr_lat)>Y_mid(NY_GC))then 
         curr_u_PS = Interplt_uv_PS_polar(1, u, v, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
         curr_v_PS = Interplt_uv_PS_polar(0, u, v, i_lon, i_lat, i_lev, curr_lon, curr_lat, curr_pressure)
         else
@@ -1278,14 +1374,14 @@ CONTAINS
               (RK_Dlev(1)+2.0*RK_Dlev(2)+2.0*RK_Dlev(3)+RK_Dlev(4))/6.0
 
     ! make sure the location is not out of range
-    do while (box_lat > Y_edge(JJPAR+1))
-        box_lat = Y_edge(JJPAR+1) - ( box_lat-Y_edge(JJPAR+1) )
+    do while (box_lat > Y_edge(NY_GC+1))
+        box_lat = Y_edge(NY_GC+1) - ( box_lat-Y_edge(NY_GC+1) )
     end do
     do while (box_lat < Y_edge(1))
         box_lat = Y_edge(1) + ( box_lat-Y_edge(1) )
     end do
 
-    do while (box_lon > X_edge(IIPAR+1))
+    do while (box_lon > X_edge(NX_GC+1))
         box_lon = box_lon - 360.0
     end do
     do while (box_lon < X_edge(1))
@@ -1299,7 +1395,7 @@ CONTAINS
     !--------------------------------------------------------------------
     ! interpolate temperature for plume volumn change (PV=nRT):
     !--------------------------------------------------------------------
-    if(abs(curr_lat)>Y_mid(JJPAR))then
+    if(abs(curr_lat)>Y_mid(NY_GC))then
         curr_T1 = Interplt_wind_RLL_polar(T1, i_lon, i_lat, &
                                 i_lev, curr_lon, curr_lat, curr_pressure)
     else
@@ -1309,18 +1405,18 @@ CONTAINS
 
     ! update index based on new location
     i_lon = Find_iLonLat(box_lon, DX, X_edge2)
-    if(i_lon>IIPAR) i_lon=i_lon-IIPAR
-    if(i_lon<1) i_lon=i_lon+IIPAR
+    if(i_lon>NX_GC) i_lon=i_lon-NX_GC
+    if(i_lon<1) i_lon=i_lon+NX_GC
 
     i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
-    if(i_lat>JJPAR) i_lat=JJPAR
+    if(i_lat>NY_GC) i_lat=NY_GC
     if(i_lat<1) i_lat=1
 
     i_lev = Find_iPLev(box_lev,P_edge)
-    if(i_lev>LLPAR) i_lev=LLPAR
+    if(i_lev>NZ_GC) i_lev=NZ_GC
 
 
-    if(abs(box_lat)>Y_mid(JJPAR))then
+    if(abs(box_lat)>Y_mid(NY_GC))then
         next_T2 = Interplt_wind_RLL_polar(T2, i_lon, i_lat, i_lev, box_lon, box_lat, box_lev)
     else
         next_T2 = Interplt_wind_RLL(T2, i_lon, i_lat, i_lev, box_lon, box_lat, box_lev)
@@ -1441,7 +1537,7 @@ CONTAINS
     !--------------------------------------------------------------------
     ! interpolate potential temperature for Plume module:
     !--------------------------------------------------------------------
-    IF(abs(curr_lat)>Y_mid(JJPAR))then
+    IF(abs(curr_lat)>Y_mid(NY_GC))then
       curr_Ptemp = Interplt_wind_RLL_polar(Ptemp, i_lon, i_lat, &
                               i_lev, curr_lon, curr_lat, curr_pressure)
     ELSE
@@ -1726,6 +1822,7 @@ CONTAINS
   END SUBROUTINE plume_physics
 
   SUBROUTINE plume_chem_microphysics(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+    ! All the use have been defined in host: Plume_box_model
     USE Input_Opt_Mod,            ONLY : OptInput, PlumeSource_t
     USE State_Chm_Mod,            ONLY : ChmState, Ind_
     USE State_Met_Mod,            ONLY : MetState
@@ -1733,6 +1830,8 @@ CONTAINS
     USE TIME_MOD,                 ONLY : GET_TS_DYN
     USE State_Grid_Mod,           ONLY : GrdState
     USE UnitConv_Mod
+    USE ERROR_MOD
+
     !USE State_Diag_Mod,           ONLY : DgnState
     !USE State_Diag_Mod,           ONLY : DgnMap
     ! KPP-related module
@@ -1760,7 +1859,7 @@ CONTAINS
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
 
     
-    
+    INTEGER                       :: N
     INTEGER                       :: i_box, i_lon, i_lat, i_lev
     INTEGER                       :: i_species, i_species_1,i_phot, i_kpp, i_rxn
     INTEGER                       :: i_x, i_y
@@ -1772,8 +1871,12 @@ CONTAINS
     
     INTEGER                       :: ISTATUS(20)
     INTEGER                       :: ICNTRL (20)
-
-
+    INTEGER                       :: chem_status
+    INTEGER                       :: n_low_SO2, n_low_OH, n_low_rate
+    INTEGER                       :: n_debug_chem, n_debug_chem_max
+    INTEGER, ALLOCATABLE          :: debug_ix(:), debug_iy(:), debug_ibox(:)
+    INTEGER, ALLOCATABLE          :: debug_status(:)
+    
     REAL(fp)                      :: Vgrid_2D, Vgrid_EU
     REAL(fp)                      :: mass_OH, mass_HO2
     REAL(fp)                      :: Dt
@@ -1786,8 +1889,14 @@ CONTAINS
     REAL(fp)                      :: PSO4AQ_RATE_2d(n_x_max,n_y_max) ! Cld chem sulfate prod rate [kg s-1]
     REAL(fp)                      :: K_SO2_OH
     REAL(fp)                      :: full_exchange_conc
+    REAL(fp)                      :: chem_debug_value
     REAL(fp)                      :: C_before_Chem(nspc_p),C_after_Chem(nspc_p)
     REAL(fp), ALLOCATABLE         :: box_concnt_2D(:,:,:)
+    REAL(fp), ALLOCATABLE         :: debug_value(:)
+    
+
+
+
     LOGICAL                       :: Failed2x,  Size_Res, doSuppress
 
     CHARACTER(LEN=255)            :: ErrMsg
@@ -1822,39 +1931,63 @@ CONTAINS
     ! - Temporary define TOMAS related variable here so that it can be moved
     ! to a separate module if necessary
     ! - For TOMAS, species need to be in unit: kg, convert before feeding to TOMAS array
-    ! - TOMAS species order (in Mk, Nk, Gc) is different from that used in Plume and GC
+    ! - TOMAS species order (in Mk, Gc) is different from that used in Plume and GC
     ! hard coded below: 1 SO4, 2, NH4, 3, H2O
     ! - Temporarily set unused variable = -1
     !========================================================================
-    INTEGER, PARAMETER   :: SRTSO4  = 1
-    INTEGER, PARAMETER   :: SRTNACL = -1
-    INTEGER, PARAMETER   :: SRTECOB = -1
-    INTEGER, PARAMETER   :: SRTECIL = -1
-    INTEGER, PARAMETER   :: SRTOCOB = -1
-    INTEGER, PARAMETER   :: SRTOCIL = -1
-    INTEGER, PARAMETER   :: SRTDUST = -1
-    INTEGER, PARAMETER   :: SRTNH4  = 2
-    INTEGER, PARAMETER   :: SRTH2O  = 3
-
-    INTEGER, PARAMETER   :: ICOMPHARD =  3 ! number of used variable in TOMAS
-    LOGICAL            :: COND, COAG, NUCL !<step5.1> switch for each process (win 4/8/06)
-
-    INTEGER            :: ibin
-
-    REAL*4             :: BOXVOL,  BOXMASS, TEMPTMS
-    REAL*4             :: PRES,    RHTOMAS
-    REAL(fp)           :: molwt
-    REAL(fp)           :: NH4bulk
-    REAL(fp)           ::  ionrate 
     
+    !REAL(fp)             :: Mo
+    
+
+    LOGICAL              :: COND, COAG, NUCL !<step5.1> switch for each process (win 4/8/06)
+    LOGICAL              :: PRINTNEG  !<step4.0-temp> (win, 3/24/05)
+    LOGICAL              :: ERRORSWITCH  !<step4.2> To see where mnfix found negative value (win, 9/12/05)
+    LOGICAL              :: ERRSPOT   !<step4.4> To see where so4cond found errors (win, 9/21/05)
+    LOGICAL              :: PRINTDEBUG !<step4.3> Print out for debugging (win, 9/16/05)
+
+    INTEGER              :: ibin, i_L
+    INTEGER              :: num_iter
+    INTEGER              :: id_tracer, id_tracer_1
+
+    REAL(fp)             :: BOXVOL,  BOXMASS, TEMPTMS,   PRES,   RHTOMAS
+    REAL(fp)             :: surf_area     ! aerosol surface area [micon^2 cm^-3]
+    REAL(fp)             :: h2so4rate_o ! H2SO4rate for the specific grid cell
+    REAL(fp)             :: fn  ! nucleation rate of clusters cm-3 s-1
+    REAL(fp)             :: fn1 ! formation rate of particles to first size bin cm-3 s-1
+    REAL(fp)             :: nucrate(State_Grid%NY,State_Grid%NZ)
+    REAL(fp)             :: nucrate1(State_Grid%NY,State_Grid%NZ)
+    REAL(fp)             :: molwt_spc
+    REAL(fp)             :: NH4bulk, NH3_to_NH4, CEPS
+    REAL(fp)             :: ionrate  ! ion pair formation rate [ion pairs cm^-3 s^-1]
+    REAL(fp)             :: tot_s_1
+    REAL(fp)             :: tot_n_1
+    REAL(fp)             :: TOT_MK, TOT_NK
+    REAL(fp)             :: Nk(nBins), Nkd(nBins), Nkout(nBins), Nknuc(nBins), Nkcond(nBins)
+    REAL(fp)             :: Mk(nBins, ICOMPHARD), Mkd(nBins, ICOMPHARD), Mkout(nBins,ICOMPHARD), Mknuc(nBins,ICOMPHARD), Mkcond(nBins,ICOMPHARD)
+    REAL(fp)             :: Gc(ICOMPHARD), Gcd(ICOMPHARD), Gcout(ICOMPHARD)
+    !REAL(fp)             :: 
+    REAL(fp)             :: TRANSFER(nbins)
+    parameter ( CEPS=1.e-17_fp )
+    ! Arguments for CHECK_VALUE; avoids array temporaries (bmy, 1/28/14)
+    CHARACTER(LEN=255) :: ERR_VAR
+    CHARACTER(LEN=255) :: ERR_MSG
+    INTEGER            :: ERR_IND(4)
+
+    CHARACTER(LEN=255)     :: spc_name
     ! This variable is intend to use as a reference, when exchange species from TOMAS to plume
     ! convert to original unit mole/cm3 and exchange with box_concnt_2D
     ! REAL(fp), ALLOCATABLE         :: box_concnt_2D_kg(:,:,:) 
     ! Initialization
     ! Initialize switches for each microphysical process
-    COND = .TRUE.
-    COAG = .TRUE.
-    NUCL = .TRUE.
+    COND                   = .TRUE.
+    COAG                   = .TRUE.
+    NUCL                   = .TRUE.
+
+    ! Initialize debugging and error-signal switches
+    PRINTNEG               = .FALSE.
+    ERRORSWITCH            = .FALSE.
+    PRINTDEBUG             = .FALSE.
+    ERRSPOT                = .FALSE.
     !========================================================================
     ! plume_chem_microphysics begins here!
     ! New version solve simplified chemistry independently
@@ -1903,11 +2036,18 @@ CONTAINS
     ! Noted that in GEOS-Chem, the default chemistry timestep is 20min, dynamic time step is 10min
     ! Here we implement chemsitry timestep using 10min
     Dt                     =    GET_TS_DYN()
+    n_debug_chem_max       =    n_x_max * n_y_max
     
     mass_S_SO2_3 = 0.0_fp
     mass_S_SO4_3 = 0.0_fp
 
     ALLOCATE(box_concnt_2D(n_x_max, n_y_max, nspc_p ))
+    ALLOCATE(debug_ix(n_debug_chem_max))
+    ALLOCATE(debug_iy(n_debug_chem_max))
+    ALLOCATE(debug_ibox(n_debug_chem_max))
+    ALLOCATE(debug_status(n_debug_chem_max))
+    ALLOCATE(debug_value(n_debug_chem_max))
+
 !#ifdef TOMAS
     !ALLOCATE(box_concnt_2D_kg(n_x_max, n_y_max, nspc_p ))
 ! #endif
@@ -1918,8 +2058,8 @@ CONTAINS
 
     ! IF (State_Diag%Archive_RxnConst        ) Write(6, *) "Debug: (BZ) ; Archive_RxnRate", State_Diag%Archive_RxnRate
     ! For debug process, print rate constant 202: SO2 + OH {+M} = SO4 + HO2 + PH2SO4 :
-    Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN 202 = ", &
-      RXNRATE_CONST_KPP(23, 40, 39 ,202)
+    Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN SO2_OH_RXN_ID = ", &
+      RXNRATE_CONST_KPP(23, 40, 39 ,SO2_OH_RXN_ID)
     DO WHILE(ASSOCIATED(Plume2d_curr))
       i_box         = Plume2d_curr%label
       i_lon         = Plume2d_curr%lon_ind
@@ -1940,7 +2080,7 @@ CONTAINS
 
       Vgrid_2D        =  Plume2d_curr%Pdx * Plume2d_curr%Pdy * Plume2d_curr%length * 1.0e+6_fp ! [cm3]
       Vgrid_EU        =  State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
-      K_SO2_OH        =  RXNRATE_CONST_KPP(i_lon,i_lat,i_lev , 202)
+      K_SO2_OH        =  RXNRATE_CONST_KPP(i_lon,i_lat,i_lev , SO2_OH_RXN_ID)
       box_concnt_2D   =  Plume2d_curr%CONCNT2d
 
       WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO2 ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
@@ -1955,17 +2095,28 @@ CONTAINS
       WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of SO4 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO4_p)
       WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of OH ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_OH_p)
       
-      
-      !!$OMP PARALLEL DO           &
-      !!$OMP DEFAULT( SHARED     ) &
-      !!$OMP PRIVATE(i_y,i_x, Thread)&
-      !!$OMP PRIVATE(C_before_Chem, C_after_Chem)&
-      !!$OMP COLLAPSE( 2                    )&
+      n_debug_chem     =  0
+      debug_ix         =  0
+      debug_iy         =  0
+      debug_ibox       =  0
+      debug_status     =  0
+      debug_value      =  0.0_fp
+      !$OMP PARALLEL DO           &
+      !$OMP DEFAULT( SHARED     ) &
+      !$OMP PRIVATE(i_y,i_x)&
+      !$OMP PRIVATE(chem_status, chem_debug_value)&
+      !$OMP PRIVATE(C_before_Chem, C_after_Chem)&
+      !$OMP COLLAPSE( 2                    )
       !!$OMP SCHEDULE( DYNAMIC, 24          )&
-      !!$OMP REDUCTION( +:errorCount        )
+      !!$OMP REDUCTION( +:n_debug_chem        )
 
       DO i_y = 1, n_y_max, 1
         DO i_x = 1, n_x_max, 1
+          
+          
+          chem_status     =  0
+          chem_debug_value = 0.0_fp
+
           C_before_Chem(id_SO2_p)     =  box_concnt_2D(i_x,i_y,id_SO2_p)
           C_before_Chem(id_SO4_p)     =  box_concnt_2D(i_x,i_y,id_SO4_p)
           C_before_Chem(id_OH_p)      =  box_concnt_2D(i_x,i_y,id_OH_p)
@@ -1977,7 +2128,20 @@ CONTAINS
           CALL CHEM_SO2_OH_PLUME( Dt, K_SO2_OH, C_after_Chem(id_SO2_p),       &
                                      C_after_Chem(id_OH_p), C_after_Chem(id_SO4_p), &
                                      C_after_Chem(id_HO2_p), C_after_Chem(id_PH2SO4_p), &
-                                     i_x, i_y, i_box )
+                                     i_x, i_y, i_box, chem_status,chem_debug_value )
+
+          IF ( chem_status /= 0 ) THEN
+            !$OMP CRITICAL(debug_store)
+            IF ( n_debug_chem < n_debug_chem_max ) THEN
+                n_debug_chem = n_debug_chem + 1
+                debug_ix(n_debug_chem)     = i_x
+                debug_iy(n_debug_chem)     = i_y
+                debug_ibox(n_debug_chem)   = i_box
+                debug_status(n_debug_chem) = chem_status
+                debug_value(n_debug_chem)  = chem_debug_value
+            ENDIF
+            !$OMP END CRITICAL(debug_store)
+          ENDIF
 
           box_concnt_2D(i_x,i_y,id_SO2_p)    = REAL( C_after_Chem(id_SO2_p), kind=fp )
           box_concnt_2D(i_x,i_y,id_SO4_p)    = REAL( C_after_Chem(id_SO4_p), kind=fp )
@@ -1990,8 +2154,26 @@ CONTAINS
           !Plume2d_curr%CONCNT2d(i_x,i_y,id_PH2SO4) = REAL( C_after_integrate(id_PH2SO4), kind=fp )
         ENDDO
       ENDDO
-      !!$OMP END PARALLEL DO
+      !$OMP END PARALLEL DO
       
+      ! Chemistry debug output
+      DO N = 1, n_debug_chem
+        SELECT CASE ( debug_status(N) )
+        CASE (1)
+          WRITE(6,*) "Skip chem: low SO2 at [x,y,box]= ", &
+                    debug_ix(N), debug_iy(N), debug_ibox(N), &
+               " value = ", debug_value(n)
+        CASE (2)
+          WRITE(6,*) "Skip chem: low OH at [x,y,box]= ", &
+                    debug_ix(N), debug_iy(N), debug_ibox(N), &
+               " value = ", debug_value(n)
+        CASE (3)
+          WRITE(6,*) "Skip chem: low K[SO2][OH]dt at [x,y,box] = ", &
+                    debug_ix(N), debug_iy(N), debug_ibox(N), &
+                    " value = ", debug_value(N)
+        END SELECT
+      ENDDO
+
       ! Exchange OH/HO2 with background 
       mass_OH     = Spc(id_OH)%Conc(i_lon,i_lat,i_lev)*Vgrid_EU +      &
                           SUM(box_concnt_2D(:,:,id_OH_p))*Vgrid_2D
@@ -2013,69 +2195,81 @@ CONTAINS
       !DO i_species = 1, nspc_p
       !  spc_name = spc_names_p(i_species)
       !  id_tracer   = Ind_(TRIM(spc_name))
-      !  molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
+      !  molwt_spc       = State_Chm%SpcData(id_tracer)%Info%MW_g
       !  ! molec/cm3 -> kg
-      !  box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+      !  box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt_spc/1.0E+3_fp
       !ENDDO
 
       ! TOMAS species unit should be in kg
       ! GC, MK, NK
+      !$OMP PARALLEL DO         &
+      !$OMP DEFAULT( SHARED )   &
+      !$OMP PRIVATE( i_y, i_x, i_species, i_species_1, ibin, id_tracer )  &
+      !$OMP PRIVATE( PRES, TEMPTMS, BOXMASS, RHTOMAS, BOXVOL )       &
+      !$OMP PRIVATE(spc_name, molwt_spc, tot_n_1, tot_s_1, TOT_NK, TOT_MK)    &
+      !$OMP PRIVATE(Gc, Gcd, GCout, Nk, Nkd, Nkout, Nknuc, Nkcond, MK, Mkd,Mkout, Mknuc, Mkcond)        &
+      !$OMP PRIVATE( TRANSFER, H2SO4rate_o, NH4bulk, fn, fn1,num_iter, ionrate, surf_area)       & 
+      !$OMP PRIVATE(ERRORSWITCH, PRINTNEG, PRINTDEBUG, ERRSPOT)  &
+      !$OMP PRIVATE( ERR_VAR, ERR_MSG, ERR_IND )                     &
+      !$OMP SCHEDULE( DYNAMIC )
       DO i_y = 1, n_y_max, 1
         DO i_x = 1, n_x_max, 1
           PRES    = State_Met%PMID(i_lon,i_lat,i_lev)*100.0 ! in Pa
           TEMPTMS = State_Met%T(i_lon,i_lat,i_lev)
-          BOXMASS = State_Met%AD(i_lon,i_lat,i_lev)*Vgrid_2D/Vgrid_EU
+          BOXMASS = State_Met%AD(i_lon,i_lat,i_lev)*Vgrid_2D/Vgrid_EU ! Dry air mass, kg
           RHTOMAS = State_Met%RH(i_lon,i_lat,i_lev)/ 1.e2
           IF ( RHTOMAS > 0.99 ) RHTOMAS = 0.99
-          BOXVOL  = Vgrid_2D * 1.e6 !convert from m3 -> cm3
+          BOXVOL  = Vgrid_2D  !cm3
+
           ! Initialize all condensible gas values to zero
           ! Gc(srtso4) will remain zero until within cond_nuc where the
           ! pseudo steady state H2SO4 concentration will be put in this place.
-          DO i_species=1, ICOMPHARD ! all tomas tracer - Nk, in here just SF and AW
+          DO i_species=1, ICOMPHARD ! all tomas tracer - Nk, in here just SF NH4 AW
               Gc(i_species) = 0.e+0_fp
           ENDDO
-          ! Swap Spc into Nk, Mk, Gc arrays
+          ! Swap Spc into Nk, Mk, Gc arrays, unit kg
           DO ibin = 1, nBins
               ! Mol weight for Nk is 1
               i_species_1 = id_NK01_p+(ibin-1)*nspc_p_tomas_tracer
-              NK(ibin) = box_concnt_2D(i_x,i_y,i_species_1)*Vgrid_2D/Avo/1.0E+3_fp
+              NK(ibin) = box_concnt_2D(i_x,i_y,i_species_1)*BOXVOL/Avo/1.0E+3_fp
               DO i_species = 1, ICOMPHARD-2 ! skip NH4 and H2O
                 i_species_1 = id_NK01_p+i_species+(ibin-1)*nspc_p_tomas_tracer
                  spc_name = spc_names_p(id_NK01_p+i_species)
                  id_tracer   = Ind_(TRIM(spc_name))
-                 molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
-                MK(ibin,i_species) = box_concnt_2D(i_x,i_y,i_species_1)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+                 molwt_spc       = State_Chm%SpcData(id_tracer)%Info%MW_g
+                 MK(ibin,i_species) = box_concnt_2D(i_x,i_y,i_species_1)*BOXVOL/Avo*molwt_spc/1.0E+3_fp
 
-                IF( IT_IS_NAN( MK(ibin,i_species) ) ) THEN
-                    PRINT *,'+++++++ Found NaN in AEROPHYS ++++++++'
-                    PRINT *,'Location (i_plume, i_x, i_y):',i_box,i_x,i_y,'Bin',ibin,'comp',spc_name
-                ENDIF
+                !IF( IT_IS_NAN( MK(ibin,i_species) ) ) THEN
+                !    PRINT *,'+++++++ Found NaN in AEROPHYS ++++++++'
+                !    PRINT *,'Location (i_plume, i_x, i_y):',i_box,i_x,i_y,'Bin',ibin,'comp',spc_name
+                !ENDIF
 
               ENDDO
               id_tracer   = Ind_('AW01')
-              molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
-              MK(ibin,SRTH2O) = box_concnt_2D(i_x,i_y,id_AW01_p+(ibin-1)*nspc_p_tomas_tracer)*Vgrid_2D/Avo*molwt/1.0E+3_fp
+              molwt_spc       = State_Chm%SpcData(id_tracer)%Info%MW_g
+              MK(ibin,SRTH2O) = box_concnt_2D(i_x,i_y,id_AW01_p+(ibin-1)*nspc_p_tomas_tracer)*BOXVOL/Avo*molwt_spc/1.0E+3_fp
 
           ENDDO
 
           ! Get NH4 mass from the bulk mass and scale to bin with sulfate
           IF ( SRTNH4 > 0 ) THEN
-              id_tracer =GET_PLUME_SPC_ID('NH4')
-              NH4bulk = box_concnt_2D(i_x,i_y,id_tracer)
+
+              NH4bulk = box_concnt_2D(i_x,i_y,id_NH4_p)*BOXVOL/Avo*18.0_fp/1.0E+3_fp
               CALL NH4BULKTOBIN( MK(:,SRTSO4), NH4bulk, TRANSFER )
               MK(1:nbins,SRTNH4) = TRANSFER(1:nbins)
-              Gc(SRTNH4) = box_concnt_2D(i_x,i_y,id_NH3_p)
+
+              Gc(SRTNH4) = box_concnt_2D(i_x,i_y,id_NH3_p)*BOXVOL/Avo*17.0_fp/1.0E+3_fp
 
           ENDIF
           ! Give it the pseudo-steady state value instead later (win,9/30/08)
           !GC(SRTSO4) = Spc(id_H2SO4)%Conc(I,J,L)
           
           H2SO4rate_o = H2SO4_RATE_2D(i_x, i_y)  ! [kg s-1]
-          IF ( H2SO4rate_o .lt. 0.e0 ) THEN
-              Print*, 'Debug TOMAS: H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
-                  'i_x = ', i_x, 'i_y = ', i_y
-              H2SO4rate_o = 0.e+0_fp
-          ENDIF
+          !IF ( H2SO4rate_o .lt. 0.e0 ) THEN
+          !    Print*, 'Debug TOMAS: H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
+          !        'i_x = ', i_x, 'i_y = ', i_y
+          !    H2SO4rate_o = 0.e+0_fp
+          !ENDIF
 
           ! nitrogen and sulfur mass checks
           ! get the total mass of N
@@ -2086,8 +2280,8 @@ CONTAINS
 
           ! get the total mass of S
           tot_s_1 = H2SO4rate_o*Dt*32.e+0_fp/98.e+0_fp
-          do k=1,ibins
-              tot_s_1 = tot_s_1 + Mk(k,srtso4)*32.e+0_fp/96.e+0_fp
+          do ibin=1,nbins
+              tot_s_1 = tot_s_1 + Mk(ibin,srtso4)*32.e+0_fp/96.e+0_fp
           enddo
 
           !Do water eqm at appropriate times
@@ -2095,110 +2289,218 @@ CONTAINS
 
           !Fix any inconsistencies in M/N distribution (because of advection)
           CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
-          !print *, 'mnfix in tomas_mod:533'
-          CALL MNFIX( NK, MK, ERRORSWITCH )
-          IF ( ERRORSWITCH ) THEN
-              PRINT *,'Aerophys: MNFIX found error at',I,J,L
-              CALL ERROR_STOP('AEROPHYS-MNFIX (1)','Enter microphys')
-          ENDIF
+          !CALL MNFIX( NK, MK, ERRORSWITCH )
+          !IF ( ERRORSWITCH ) THEN
+          !    PRINT *,'Aerophys: MNFIX found error at',I,J,L
+          !    CALL ERROR_STOP('AEROPHYS-MNFIX (1)','Enter microphys')
+          !ENDIF
 
 
-                 ! Before doing any cond/nucl/coag, check if there's any aerosol in
-       ! the current box
-       TOT_NK = 0.e+0_fp
-       TOT_MK = 0.e+0_fp
-       do k = 1, ibins
-          TOT_NK = TOT_NK + Nk(K)
-          do jc=1, icomp-idiag
-             TOT_MK = TOT_MK + Mk(k,jc)
-          enddo
-       enddo
-
-       if(TOT_NK .lt. 1.e-10_fp) then
-          if( .NOT. SPINUP(5.0)) then
-             print *,'No aerosol in box ',I,J,L,'-->SKIP'
+          ! Before doing any cond/nucl/coag, check if there's any aerosol in
+          ! the current box
+          TOT_NK = SUM(NK)
+          if(TOT_NK .lt. 1.e-10_fp) then
+              if( .NOT. SPINUP(5.0)) then
+                print *,'No aerosol in box (i_box, i_x, i_y) ',i_box, i_x, i_y,'-->SKIP'
+              endif
+              CYCLE
           endif
-          CYCLE
-       endif
 
-       !-------------------------------------
-       ! Condensation and nucleation (coupled)
-       !-------------------------------------
-       IF ( COND .AND. NUCL .AND. H2SO4rate_o > 0.e0_fp) THEN
+          !---------------------------------------
+          ! Condensation and nucleation (coupled)
+          !---------------------------------------
+          IF ( COND .AND. NUCL .AND. H2SO4rate_o > 0.e0_fp) THEN
 
-          !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
+              !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
 
-          CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
-          CALL COND_NUC(Nk,Mk,Gc,Nkout,Mkout,Gcout,fn,fn1, &
-                        H2SO4rate_o,adt,num_iter,Nknuc,Mknuc,Nkcond,Mkcond, &
-                        ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, PRES, &
-                        RHTOMAS, ERRORSWITCH, l)
+              CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+              CALL COND_NUC(Nk,Mk,Gc,Nkout,Mkout,Gcout,fn,fn1, &
+                            H2SO4rate_o,Dt,num_iter,Nknuc,Mknuc,Nkcond,Mkcond, &
+                            ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, PRES, &
+                            RHTOMAS, ERRORSWITCH, i_lev)
 
-          IF ( ERRORSWITCH ) THEN
-             PRINT *,'Aerophys: found error at',I,J,L
-             CALL ERROR_STOP('AEROPHYS','After cond_nuc')
-          ENDIF
+              IF ( ERRORSWITCH ) THEN
+                !PRINT *,'Aerophys: found error at (i_box, i_x, i_y)',i_box, i_x, i_y
+                WRITE(errMsg, '(A,I0,A,I0,A,I0)') &
+                    'Aerophys, after cond_nuc: found error at i_box=', i_box, &
+                    ' i_x=', i_x, &
+                    ' i_y=', i_y
+                CALL ERROR_STOP( errMsg, thisLoc)
+                !CALL ERROR_STOP('AEROPHYS','After cond_nuc')
+              ENDIF
 
-          ERR_VAR = 'Gcout'
-          ERR_MSG = 'After COND_NUC'
-          ! check for NaN and Inf (win, 10/4/08)
-          do jc = 1, icomp-1
-             ERR_IND(1) = I
-             ERR_IND(2) = J
-             ERR_IND(3) = L
-             ERR_IND(4) = 0
-!             IF (SPINUP(14.0) .and. Gcout(jc) /= Gcout(jc) ) THEN
-             IF( SPINUP(14.0) .AND. IT_IS_NAN( Gcout(jc) ) ) THEN
-                 Gcout(jc) = 0.0e+0_fp ! reset Nan to zero during spinup, bc 18/12/23
-                 print*,'Reset Gcout NaN to zero at ',I,J,L
-             ELSEIF ( SPINUP(14.0) .AND. .not. IT_IS_FINITE( Gcout(jc) ) ) THEN
-                 Gcout(jc) = 0.0e+0_fp ! reset Inf to zero during spinup, bc 18/12/23
-                 print*,'Reset Gcout Inf to zero at ',I,J,L
-             ELSE
-             call check_value( Gcout(jc), ERR_IND, ERR_VAR, ERR_MSG )
-             ENDIF
-             !if( IT_IS_FINITE(Gcout(jc))) then
-             !   print *,'xxxxxxxxx Found Inf in Gcout xxxxxxxxxxxxxx'
-             !   print *,'Location ',I,J,L, 'comp',jc
-             !   call debugprint( Nkout, Mkout, i,j,l,'After COND_NUC')
-             !   stop
-             !endif
-          enddo
+              ERR_VAR = 'Gcout'
+              ERR_MSG = 'After COND_NUC'
+              ! check for NaN and Inf (win, 10/4/08)
+              DO N = 1, ICOMPHARD
+                ERR_IND(1) = i_box
+                ERR_IND(2) = i_x
+                ERR_IND(3) = i_y
+                ERR_IND(4) = 0
+    !             IF (SPINUP(14.0) .and. Gcout(jc) /= Gcout(jc) ) THEN
+                IF( SPINUP(14.0) .AND. IT_IS_NAN( Gcout(N) ) ) THEN
+                    Gcout(N) = 0.0e+0_fp ! reset Nan to zero during spinup, bc 18/12/23
+                    print*,'Reset Gcout NaN to zero at ',i_box, i_x, i_y
+                ELSEIF ( SPINUP(14.0) .AND. .not. IT_IS_FINITE( Gcout(N) ) ) THEN
+                    Gcout(N) = 0.0e+0_fp ! reset Inf to zero during spinup, bc 18/12/23
+                    print*,'Reset Gcout Inf to zero at ',i_box, i_x, i_y
+                ELSE
+                ! call check_value( Gcout(N), ERR_IND, ERR_VAR, ERR_MSG )
+                ENDIF
+                !if( IT_IS_FINITE(Gcout(jc))) then
+                !   print *,'xxxxxxxxx Found Inf in Gcout xxxxxxxxxxxxxx'
+                !   print *,'Location ',I,J,L, 'comp',jc
+                !   call debugprint( Nkout, Mkout, i,j,l,'After COND_NUC')
+                !   stop
+                !endif
+              ENDDO
 
-          !get nucleation diagnostic
-          DO N = 1, IBINS
-             NK(N) = NKnuc(N)
-             DO JC = 1, ICOMP
-                MK(N,JC) = MKnuc(N,JC)
-             ENDDO
-          ENDDO
+              !get nucleation diagnostic
+              DO ibin = 1, nbins
+                NK(ibin) = NKnuc(ibin)
+                DO N = 1, ICOMPHARD
+                    MK(ibin,N) = MKnuc(ibin,N)
+                ENDDO
+              ENDDO
 
+              !get condensation diagnostic
+              DO ibin = 1, nBins
+                NK(ibin) = NKcond(ibin)
+                DO N = 1, ICOMPHARD
+                    MK(ibin,N) = MKcond(ibin,N)
+                ENDDO
+              ENDDO
 
+              ! Update GC, NK, Mk
+              Gc(srtnh4)=Gcout(srtnh4)
+              Gc(srtso4)=Gcout(srtso4)
+              !nucrate(j,l)=nucrate(j,l)+fn
+              !nucrate1(j,l)=nucrate1(j,l)+fn1
+
+              DO ibin = 1, nBins
+                NK(ibin) = NKout(ibin)
+                DO N = 1, ICOMPHARD
+                    MK(ibin,N) = MKout(ibin,N)
+                ENDDO
+              ENDDO
+          ENDIF ! end of cond and nuc !
+
+          ! nitrogen and sulfur mass checks and fix
+          !tot_n_1a = Gc(srtnh4)*14.e+0_fp/17.e+0_fp
+          !do k=1,ibins
+          !    tot_n_1a = tot_n_1a + Mk(k,srtnh4)*14.e+0_fp/18.e+0_fp
+          !enddo
+          !tot_s_1a = 0.e+0_fp
+          !do k=1,ibins
+          !    tot_s_1a = tot_s_1a + Mk(k,srtso4)*32.e+0_fp/96.e+0_fp
+          !enddo
+
+          !CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+          !print *, 'mnfix in tomas_mod:677'
+          !CALL MNFIX( Nk, Mk, ERRORSWITCH )
+          !IF ( ERRORSWITCH ) THEN
+          !    PRINT *,'Aerophys: MNFIX found error at',I,J,L
+          !    IF( .not. SPINUP(14.0) ) THEN
+          !      CALL ERROR_STOP('AEROPHYS-MNFIX (2)','After cond/nucl')
+          !    ELSE
+          !      PRINT *,'Let error go during spin up'
+          !    ENDIF
+          !ENDIF
           !-----------------------------
           ! Coagulation
           !-----------------------------
 
+          !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
+          IF( COAG )  THEN
+            CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+            CALL MULTICOAG( Dt, Nk, Mk, BOXVOL, PRES, TEMPTMS, ERRORSWITCH )
+            IF ( ERRORSWITCH ) THEN
+               print*,'error after coagulation at (i_box, i_x, i_y) = ',i_box, i_x, i_y
+               !CALL DEBUGPRINT( Nk, Mk, I, J, L,'After coagulation' )
+            ENDIF
+            
+          !Fix any inconsistency after coagulation (win, 4/18/06)
+          !CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
+          !if(printdebug .and. i==iob.and.j==job.and.l==lob) &
+          !     ERRORSWITCH=.true. !4/18/06 win
+          !print *, 'mnfix in tomas_mod:719'
+          !CALL MNFIX( NK, MK, ERRORSWITCH )
+
+          !IF ( ERRORSWITCH ) THEN
+          !   PRINT *,'MNFIX found error at',I,J,L
+          !   IF( .not. SPINUP(14.0) ) THEN
+          !      CALL ERROR_STOP('AEROPHYS-MNFIX (3)', 'After COAGULATION'  )
+          !   ELSE
+          !      PRINT *,'Let error go during spin up'
+          !   ENDIF
+          !ENDIF
+
+          ENDIF ! end of coagulation
+
           ! Do water eqm at appropriate times
-       CALL EZNH3EQM( Gc, Mk )
-       CALL EZWATEREQM ( MK, RHTOMAS )
+          CALL EZNH3EQM( Gc, Mk )
+          CALL EZWATEREQM ( MK, RHTOMAS )
+          !****************************
+          ! End of aerosol dynamics
+          !****************************
+          !Fix any inconsistencies in M/N distribution (because of advection)
+          CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
 
-       ! Swap Nk, Mk, and Gc arrays back to Spc
+          ! Make sure anything that leaves AEROPHYS is free of any error
+          ! This MNFIX call could be temporary (?) or just leave it here and
+          ! monitor if the error fixed is significantly large meaning some
+          ! serious problem needs to be investigated
+          !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.true.
+          !print *, 'mnfix in tomas_mod:758'
+          !CALL MNFIX(NK,MK,ERRORSWITCH)
+          !IF ( ERRORSWITCH ) THEN
+          !    PRINT *,'End of Aerophys: MNFIX found error at',I,J,L
+          !    IF( .not. SPINUP(14.0) ) THEN
+          !      CALL ERROR_STOP('AEROPHYS-MNFIX (4)', 'End of microphysics')
+          !    ELSE
+          !      PRINT *,'Let error go during spin up'
+          !    ENDIF
+          !ENDIF
 
-       ! Calculate NH3 gas lost to aerosol phase as NH4
+          ! Swap Nk, Mk, and Gc arrays back to conc array
+          ! convert unit from kg to molec/cm3
+          DO ibin = 1, nBins
+            id_tracer = id_NK01_p + (ibin-1) * nspc_p_tomas_tracer
+            box_concnt_2D(i_x,i_y,id_tracer) = Nk(ibin)*Avo*1.0E+3_fp/BOXVOL
+            DO i_species = 1, ICOMPHARD -2 
+              id_tracer_1 = id_NK01_p+i_species+(ibin-1)*nspc_p_tomas_tracer
+              spc_name = spc_names_p(id_NK01_p+i_species)
+              id_tracer   = Ind_(TRIM(spc_name))
+              molwt_spc       = State_Chm%SpcData(id_tracer)%Info%MW_g
+              box_concnt_2D(i_x,i_y,id_tracer_1) = MK(ibin,i_species)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
+            ENDDO
+            id_tracer = id_AW01_p + (ibin-1) * nspc_p_tomas_tracer
+            molwt_spc       =  State_Chm%SpcData(Ind_('H2O'))%Info%MW_g
+            box_concnt_2D(i_x,i_y,id_tracer) = MK(ibin,SRTH2O)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
+            
+          ENDDO
+          id_tracer = GET_PLUME_SPC_ID('H2SO4')
+          molwt_spc       =  State_Chm%SpcData(Ind_('H2SO4'))%Info%MW_g
+          box_concnt_2D(i_x,i_y,id_tracer) = GC(SRTSO4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
 
-       ! Update the bulk NH4 aerosol species
-
-       
+          ! Calculate NH3 gas lost to aerosol phase as NH4
+          molwt_spc       =  State_Chm%SpcData(Ind_('NH4'))%Info%MW_g
+          NH3_to_NH4 = box_concnt_2D(i_x,i_y,id_NH3_p)-GC(SRTNH4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
+          ! Update the bulk NH4 aerosol species
+          IF ( NH3_to_NH4 > 0e+0_fp ) THEN
+            !Spc(id_NH4)%Conc(I,J,L) = Spc(id_NH4)%Conc(I,J,L) + &
+            !                    NH3_to_NH4/17.e+0_fp*18.e+0_fp
+            box_concnt_2D(i_x,i_y,id_NH4_p) =  box_concnt_2D(i_x,i_y,id_NH4_p) + &
+                                NH3_to_NH4
+          ENDIF
+          ! Update NH3 gas species (win, 10/6/08)
+          ! plus tiny amount CEPS in case zero causes some problem
+          molwt_spc       =  State_Chm%SpcData(Ind_('NH3'))%Info%MW_g
+          box_concnt_2D(i_x,i_y,id_NH3_p) = GC(SRTNH4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL  + CEPS !MUST CHECK THIS!! (win,9/26/08)
         ENDDO
       ENDDO
-
-      DO i_species = 1, nspc_p
-        spc_name = spc_names_p(i_species)
-        id_tracer   = Ind_(TRIM(spc_name))
-        molwt       = State_Chm%SpcData(id_tracer)%Info%MW_g
-        !  kg -> 
-        box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt/1.0E+3_fp
-      ENDDO
+      !$OMP END PARALLEL DO
+      
 
 #endif
       !========================================================================
@@ -2821,24 +3123,31 @@ CONTAINS
       mass_S_SO4_3 = mass_S_SO4_3 + SUM(Plume2d_curr%CONCNT2d(:,:, id_SO4_p)) * Vgrid_2D
       Plume2d_curr => Plume2d_curr%next
     ENDDO
-    !Write (6, *) "Debug: (BZ): In Plume  (After Plume Chem): rate constant for RXN 202 = ", &
-    !    State_Diag%RxnConst(23, 40, 39 ,202)
+    !Write (6, *) "Debug: (BZ): In Plume  (After Plume Chem): rate constant for SO2_OH_RXN_ID = ", &
+    !    State_Diag%RxnConst(23, 40, 39 ,SO2_OH_RXN_ID)
 
 
     ! deallocate unused space
     IF(allocated(box_concnt_2D)) deallocate(box_concnt_2D)
-    IF(allocated(box_concnt_2D_kg)) deallocate(box_concnt_2D_kg)
+    !IF(allocated(box_concnt_2D_kg)) deallocate(box_concnt_2D_kg)
+    IF(allocated(debug_ix)) deallocate(debug_ix)
+    IF(allocated(debug_iy)) deallocate(debug_iy)
+    IF(allocated(debug_ibox)) deallocate(debug_ibox)
+    IF(allocated(debug_status)) deallocate(debug_status)
+    IF(allocated(debug_value)) deallocate(debug_value)
+
     IF(ASSOCIATED(Spc)) nullify(Spc)
   END SUBROUTINE plume_chem_microphysics
 
   SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+    ! All the use have been defined in host: Plume_box_model
     USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
     USE State_Met_Mod,   ONLY : MetState
     USE Species_Mod,     ONLY : SpcConc
     USE TIME_MOD
     USE State_Grid_Mod,  ONLY : GrdState
-    USE UnitConv_Mod
+    !USE UnitConv_Mod
 
   !    USE GC_GRID_MOD,   ONLY : XEDGE, YEDGE
   !    USE CMN_SIZE_Mod,  ONLY : DLAT, DLON !new
@@ -3191,9 +3500,9 @@ END FUNCTION GetInjectionLat
 
         next_i_lat = i_lat
 
-        if(next_i_lon>IIPAR) next_i_lon=next_i_lon-IIPAR
-        if(next_i_lon<1)     next_i_lon=next_i_lon+IIPAR
-        if(next_i_lat>JJPAR) next_i_lat=JJPAR
+        if(next_i_lon>NX_GC) next_i_lon=next_i_lon-NX_GC
+        if(next_i_lon<1)     next_i_lon=next_i_lon+NX_GC
+        if(next_i_lat>NY_GC) next_i_lat=NY_GC
         if(next_i_lat<1)     next_i_lat=1
 
         D_wind = u(next_i_lon, next_i_lat, i_lev)-u(i_lon, i_lat, i_lev)
@@ -3210,9 +3519,9 @@ END FUNCTION GetInjectionLat
 
         next_i_lon = i_lon
 
-        if(next_i_lon>IIPAR) next_i_lon=next_i_lon-IIPAR
-        if(next_i_lon<1)     next_i_lon=next_i_lon+IIPAR
-        if(next_i_lat>JJPAR) next_i_lat=JJPAR
+        if(next_i_lon>NX_GC) next_i_lon=next_i_lon-NX_GC
+        if(next_i_lon<1)     next_i_lon=next_i_lon+NX_GC
+        if(next_i_lat>NY_GC) next_i_lat=NY_GC
         if(next_i_lat<1)     next_i_lat=1
 
         D_wind = v(next_i_lon, next_i_lat, i_lev)-v(i_lon, i_lat, i_lev)
@@ -3229,9 +3538,9 @@ END FUNCTION GetInjectionLat
 
         next_i_lat = i_lat
 
-        if(next_i_lon>IIPAR) next_i_lon=next_i_lon-IIPAR
-        if(next_i_lon<1)     next_i_lon=next_i_lon+IIPAR
-        if(next_i_lat>JJPAR) next_i_lat=JJPAR
+        if(next_i_lon>NX_GC) next_i_lon=next_i_lon-NX_GC
+        if(next_i_lon<1)     next_i_lon=next_i_lon+NX_GC
+        if(next_i_lat>NY_GC) next_i_lat=NY_GC
         if(next_i_lat<1)     next_i_lat=1
 
         D_wind = u(next_i_lon, next_i_lat, i_lev)-u(i_lon, i_lat, i_lev)
@@ -3248,9 +3557,9 @@ END FUNCTION GetInjectionLat
 
         next_i_lon = i_lon
 
-        if(next_i_lon>IIPAR) next_i_lon=next_i_lon-IIPAR
-        if(next_i_lon<1)     next_i_lon=next_i_lon+IIPAR
-        if(next_i_lat>JJPAR) next_i_lat=JJPAR
+        if(next_i_lon>NX_GC) next_i_lon=next_i_lon-NX_GC
+        if(next_i_lon<1)     next_i_lon=next_i_lon+NX_GC
+        if(next_i_lat>NY_GC) next_i_lat=NY_GC
         if(next_i_lat<1)     next_i_lat=1
 
         D_wind = v(next_i_lon, next_i_lat, i_lev)-v(i_lon, i_lat, i_lev)
@@ -3267,9 +3576,9 @@ END FUNCTION GetInjectionLat
 
         next_i_lat = i_lat
 
-        if(next_i_lon>IIPAR) next_i_lon=next_i_lon-IIPAR
-        if(next_i_lon<1)     next_i_lon=next_i_lon+IIPAR
-        if(next_i_lat>JJPAR) next_i_lat=JJPAR
+        if(next_i_lon>NX_GC) next_i_lon=next_i_lon-NX_GC
+        if(next_i_lon<1)     next_i_lon=next_i_lon+NX_GC
+        if(next_i_lat>NY_GC) next_i_lat=NY_GC
         if(next_i_lat<1)     next_i_lat=1
 
         D_wind = u(next_i_lon, next_i_lat, i_lev)-u(i_lon, i_lat, i_lev)
@@ -3336,7 +3645,7 @@ END FUNCTION GetInjectionLat
     endif
 
     if(init_lev==0) init_lev = 1
-    if(init_lev==LLPAR) init_lev = LLPAR-1
+    if(init_lev==NZ_GC) init_lev = NZ_GC-1
 
 
     ! calculate the distance between particle and grid point
@@ -3348,10 +3657,10 @@ END FUNCTION GetInjectionLat
       ! For some special circumstance:
       if(ii==0)then
         distance(i,j) = &
-             Distance_Circle(curr_lon, curr_lat, X_mid(ii+IIPAR), Y_mid(jj))
-      else if(ii==(IIPAR+1))then
+             Distance_Circle(curr_lon, curr_lat, X_mid(ii+NX_GC), Y_mid(jj))
+      else if(ii==(NX_GC+1))then
         distance(i,j) = &
-             Distance_Circle(curr_lon, curr_lat, X_mid(ii-IIPAR), Y_mid(jj))
+             Distance_Circle(curr_lon, curr_lat, X_mid(ii-NX_GC), Y_mid(jj))
       else
         distance(i,j) = &
              Distance_Circle(curr_lon, curr_lat, X_mid(ii), Y_mid(jj))
@@ -3382,11 +3691,11 @@ END FUNCTION GetInjectionLat
     do k = 1,2     
         kk = k + init_lev - 1 
         if(init_lon==0)then
-            wind_lonlat(k) =  Weight(1,1) * wind(IIPAR,init_lat,kk) &
-                          + Weight(1,2) * wind(IIPAR,init_lat+1,kk) &
+            wind_lonlat(k) =  Weight(1,1) * wind(NX_GC,init_lat,kk) &
+                          + Weight(1,2) * wind(NX_GC,init_lat+1,kk) &
                           + Weight(2,1) * wind(init_lon+1,init_lat,kk) &
                           + Weight(2,2) * wind(init_lon+1,init_lat+1,kk)
-        else if(init_lon==IIPAR)then
+        else if(init_lon==NX_GC)then
             wind_lonlat(k) =  Weight(1,1) * wind(init_lon,init_lat,kk) &
                           + Weight(1,2) * wind(init_lon,init_lat+1,kk) &
                           + Weight(2,1) * wind(1,init_lat,kk)   &
@@ -3464,7 +3773,7 @@ END FUNCTION GetInjectionLat
       endif
 
       if(init_lev==0) init_lev = 1
-      if(init_lev==LLPAR) init_lev = LLPAR-1
+      if(init_lev==NZ_GC) init_lev = NZ_GC-1
 
 
       ! calculate the distance between particle and grid point
@@ -3475,8 +3784,8 @@ END FUNCTION GetInjectionLat
 
         ! For some special circumstance:
         if(ii==0)then
-        distance(i)= Distance_Circle(curr_lon, curr_lat, X_mid(ii+IIPAR), Y_mid(jj))
-        else if(ii==(IIPAR+1))then
+        distance(i)= Distance_Circle(curr_lon, curr_lat, X_mid(ii+NX_GC), Y_mid(jj))
+        else if(ii==(NX_GC+1))then
         distance(i)= Distance_Circle(curr_lon, curr_lat, X_mid(1), Y_mid(jj))
         else
         distance(i)= Distance_Circle(curr_lon, curr_lat, X_mid(ii), Y_mid(jj))
@@ -3486,8 +3795,8 @@ END FUNCTION GetInjectionLat
 
 
     if(ii==0)then
-      distance(3)= Distance_Circle(curr_lon, curr_lat, X_mid(ii+IIPAR), 90.0e+0_fp)
-    else if(ii==(IIPAR+1))then
+      distance(3)= Distance_Circle(curr_lon, curr_lat, X_mid(ii+NX_GC), 90.0e+0_fp)
+    else if(ii==(NX_GC+1))then
       distance(3)= Distance_Circle(curr_lon, curr_lat, X_mid(1), 90.0e+0_fp)
     else
       distance(3)= Distance_Circle(curr_lon, curr_lat, X_mid(ii), 90.0e+0_fp)
@@ -3497,7 +3806,7 @@ END FUNCTION GetInjectionLat
     IF(distance(3)==0.0)THEN
         do k=1,2
           kk = k + init_lev - 1
-          wind_lonlat(k) = SUM(wind(:,init_lat,kk))/IIPAR
+          wind_lonlat(k) = SUM(wind(:,init_lat,kk))/NX_GC
         enddo
     ELSE
         ! Calculate the inverse distance weight
@@ -3508,13 +3817,13 @@ END FUNCTION GetInjectionLat
         do k=1,2
           kk = k + init_lev - 1
 
-          wind_polar = SUM(wind(:,init_lat,kk))/IIPAR      
+          wind_polar = SUM(wind(:,init_lat,kk))/NX_GC      
 
           if(init_lon==0)then    
-              wind_lonlat(k) =  Weight(1)*wind(IIPAR,init_lat,kk)   &
+              wind_lonlat(k) =  Weight(1)*wind(NX_GC,init_lat,kk)   &
                               + Weight(2)*wind(init_lon+1,init_lat,kk)   &
                               + Weight(3)*wind_polar
-          else if(init_lon==IIPAR)then
+          else if(init_lon==NX_GC)then
               wind_lonlat(k) =  Weight(1)*wind(init_lon,init_lat,kk)   &
                               + Weight(2)*wind(1,init_lat,kk)   &
                               + Weight(3)*wind_polar
@@ -3562,7 +3871,7 @@ END FUNCTION GetInjectionLat
 
     real(fp)          :: x_PS(3), y_PS(3)  ! the third value x_PS(3) is the polar point
     real(fp)          :: uv_PS(3,2)
-    real(fp)          :: uv_polars(IIPAR)
+    real(fp)          :: uv_polars(NX_GC)
     real(fp)          :: distance_PS(3), Weight_PS(3)
     real(fp)          :: uv_xy(2), uv_xy_lev
 
@@ -3591,7 +3900,7 @@ END FUNCTION GetInjectionLat
     endif
 
     if(init_lev==0) init_lev = 1
-    if(init_lev==LLPAR) init_lev = LLPAR-1
+    if(init_lev==NZ_GC) init_lev = NZ_GC-1
 
 
     ! change from (lon,lat) in RLL to (x,y) in PS: 
@@ -3615,11 +3924,11 @@ END FUNCTION GetInjectionLat
        ii = i + init_lon - 1
 
        ! For lon=180 deg:
-       if(ii==IIPAR+1)then
+       if(ii==NX_GC+1)then
           ii = 1
        endif
        if(ii==0)then
-          ii = IIPAR
+          ii = NX_GC
        endif
 
       ! Interpolate location and wind into Polar Stereographic Plane
@@ -3672,7 +3981,7 @@ END FUNCTION GetInjectionLat
       kk = k + init_lev - 1
       IF(i_uv==1)THEN ! i_ux==1 for u
       ! interpolate all the grid points surrounding the polar point:
-      do ii = 1,IIPAR
+      do ii = 1,NX_GC
         if(Y_mid(jj)>0)then
           uv_polars(ii) = -1.0* ( u_RLL(ii,jj,kk)*SIN(X_mid(ii)*PI/180.0) &
                                          / SIN(Y_mid(jj)*PI/180.0) &
@@ -3686,11 +3995,11 @@ END FUNCTION GetInjectionLat
           endif
         enddo
 
-            uv_PS(3,k) = SUM(uv_polars)/IIPAR
+            uv_PS(3,k) = SUM(uv_polars)/NX_GC
           ENDIF
 
           IF(i_uv==0)THEN ! for v
-          do ii = 1,IIPAR
+          do ii = 1,NX_GC
              if(Y_mid(jj)>0)then
                uv_polars(ii) = u_RLL(ii,jj,kk)*COS(X_mid(ii)*PI/180.0) &
                                         / SIN(Y_mid(jj)*PI/180.0) &
@@ -3703,7 +4012,7 @@ END FUNCTION GetInjectionLat
                                         / (SIN(Y_mid(jj)*PI/180.0)**2)
              endif
           enddo
-             uv_PS(3,k) = SUM(uv_polars)/IIPAR
+             uv_PS(3,k) = SUM(uv_polars)/NX_GC
           ENDIF
     enddo
 
@@ -3783,7 +4092,7 @@ END FUNCTION GetInjectionLat
     endif
 
     if(init_lev==0) init_lev = 1
-    if(init_lev==LLPAR) init_lev = LLPAR-1
+    if(init_lev==NZ_GC) init_lev = NZ_GC-1
 
     
     ! change from (lon,lat) in RLL to (x,y) in PS: 
@@ -3808,17 +4117,17 @@ END FUNCTION GetInjectionLat
         jj = jj+1
       endif
       ! For North Polar Point:
-      if(jj==JJPAR+1)then
+      if(jj==NY_GC+1)then
         jj = jj-1
       endif
 
     
       ! For lon=180 deg:
-      if(ii==IIPAR+1)then
+      if(ii==NX_GC+1)then
         ii = 1
       endif
       if(ii==0)then
-        ii = IIPAR
+        ii = NX_GC
       endif
 
 
@@ -4015,10 +4324,10 @@ END FUNCTION GetInjectionLat
       ! For some special circumstance:
       if(ii==0)then
         distance(i,j) = &
-           Distance_Circle(curr_lon, curr_lat, X_mid(ii+IIPAR), Y_mid(jj))
-      else if(ii==(IIPAR+1))then
+           Distance_Circle(curr_lon, curr_lat, X_mid(ii+NX_GC), Y_mid(jj))
+      else if(ii==(NX_GC+1))then
         distance(i,j) = &
-           Distance_Circle(curr_lon, curr_lat, X_mid(ii-IIPAR), Y_mid(jj))
+           Distance_Circle(curr_lon, curr_lat, X_mid(ii-NX_GC), Y_mid(jj))
       else
         distance(i,j) = &
            Distance_Circle(curr_lon, curr_lat, X_mid(ii), Y_mid(jj))
@@ -4039,15 +4348,15 @@ END FUNCTION GetInjectionLat
       kk = k + init_lev - 1
 
       if(init_lon==0)then
-          u_lonlat(k) =  Weight(1,1) * u(IIPAR,init_lat,kk) &
-                       + Weight(1,2) * u(IIPAR,init_lat+1,kk) &
+          u_lonlat(k) =  Weight(1,1) * u(NX_GC,init_lat,kk) &
+                       + Weight(1,2) * u(NX_GC,init_lat+1,kk) &
                        + Weight(2,1) * u(init_lon+1,init_lat,kk) &
                        + Weight(2,2) * u(init_lon+1,init_lat+1,kk)
-          v_lonlat(k) =  Weight(1,1) * v(IIPAR,init_lat,kk) &
-                       + Weight(1,2) * v(IIPAR,init_lat+1,kk) &
+          v_lonlat(k) =  Weight(1,1) * v(NX_GC,init_lat,kk) &
+                       + Weight(1,2) * v(NX_GC,init_lat+1,kk) &
                        + Weight(2,1) * v(init_lon+1,init_lat,kk) &
                        + Weight(2,2) * v(init_lon+1,init_lat+1,kk)
-      else if(init_lon==IIPAR)then
+      else if(init_lon==NX_GC)then
           u_lonlat(k) =  Weight(1,1) * u(init_lon,init_lat,kk) &
                        + Weight(1,2) * u(init_lon,init_lat+1,kk) &
                        + Weight(2,1) * u(1,init_lat,kk)   &
@@ -4079,12 +4388,12 @@ END FUNCTION GetInjectionLat
     ! [m]
     ! Delt_height    = 0.5 * ( P_BXHEIGHT(init_lon,init_lat,init_lev) +
     ! P_BXHEIGHT(init_lon,init_lat,init_lev+1) )
-    if(init_lon==0) init_lon=IIPAR
-    if(init_lon==IIPAR+1) init_lon=1
+    if(init_lon==0) init_lon=NX_GC
+    if(init_lon==NX_GC+1) init_lon=1
 
-    Delt_height = Pa2meter( P_BXHEIGHT(IIPAR,init_lat,init_lev),    &
+    Delt_height = Pa2meter( P_BXHEIGHT(NX_GC,init_lat,init_lev),    &
                           P_edge(init_lev), P_edge(init_lev+1), 1 ) &   
-                + Pa2meter( P_BXHEIGHT(IIPAR,init_lat,init_lev+1),   &
+                + Pa2meter( P_BXHEIGHT(NX_GC,init_lat,init_lev+1),   &
                           P_edge(init_lev), P_edge(init_lev+1), 0 )
 
 
@@ -4173,10 +4482,10 @@ END FUNCTION GetInjectionLat
       ! For some special circumstance:
       if(ii==0)then
         distance(i,j) = &
-             Distance_Circle(curr_lon, curr_lat, X_mid(ii+IIPAR), Y_mid(jj))
-      else if(ii==(IIPAR+1))then
+             Distance_Circle(curr_lon, curr_lat, X_mid(ii+NX_GC), Y_mid(jj))
+      else if(ii==(NX_GC+1))then
         distance(i,j) = &
-             Distance_Circle(curr_lon, curr_lat, X_mid(ii-IIPAR), Y_mid(jj))
+             Distance_Circle(curr_lon, curr_lat, X_mid(ii-NX_GC), Y_mid(jj))
       else
         distance(i,j) = &
              Distance_Circle(curr_lon, curr_lat, X_mid(ii), Y_mid(jj))
@@ -4196,13 +4505,13 @@ END FUNCTION GetInjectionLat
       kk            = k + init_lev - 1
       
       IF(init_lon==0)THEN
-        var_lonlat(k) =  Weight(1,1) *var(IIPAR,i_lat,kk)   &
-                       + Weight(1,2) *var(IIPAR,i_lat+1,kk)   &
+        var_lonlat(k) =  Weight(1,1) *var(NX_GC,i_lat,kk)   &
+                       + Weight(1,2) *var(NX_GC,i_lat+1,kk)   &
                        + Weight(2,1) *var(1,i_lat,kk) &
                        + Weight(2,2) *var(1,i_lat+1,kk)
-      ELSE IF(init_lon==IIPAR)THEN
-        var_lonlat(k) =  Weight(1,1) *var(IIPAR,i_lat,kk)   &
-                       + Weight(1,2) *var(IIPAR,i_lat+1,kk)   &
+      ELSE IF(init_lon==NX_GC)THEN
+        var_lonlat(k) =  Weight(1,1) *var(NX_GC,i_lat,kk)   &
+                       + Weight(1,2) *var(NX_GC,i_lat+1,kk)   &
                        + Weight(2,1) *var(1,i_lat,kk) &
                        + Weight(2,2) *var(1,i_lat+1,kk)
       ELSE
@@ -4216,11 +4525,11 @@ END FUNCTION GetInjectionLat
 
     ! second vertical shear of wind
     if(init_lon==0)then
-      Delt_height = Pa2meter( P_BXHEIGHT(IIPAR,init_lat,init_lev),    &
+      Delt_height = Pa2meter( P_BXHEIGHT(NX_GC,init_lat,init_lev),    &
                             P_edge(init_lev), P_edge(init_lev+1), 1 ) &
-                 + Pa2meter( P_BXHEIGHT(IIPAR,init_lat,init_lev+1),   &
+                 + Pa2meter( P_BXHEIGHT(NX_GC,init_lat,init_lev+1),   &
                             P_edge(init_lev), P_edge(init_lev+1), 0 )
-    else if(init_lon==IIPAR)then
+    else if(init_lon==NX_GC)then
       Delt_height = Pa2meter( P_BXHEIGHT(1,init_lat,init_lev),        &
                             P_edge(init_lev), P_edge(init_lev+1), 1 ) &
                  + Pa2meter( P_BXHEIGHT(1,init_lat,init_lev+1),       &
@@ -5085,7 +5394,7 @@ SUBROUTINE Set_inPlume_2d_Kpp_GridBox_Values( I_EU,J_EU, L_EU, I_LA, J_LA, Input
   RELHUM          = ( H2O / VPRESH2O ) * 100_dp 
 END SUBROUTINE Set_inPlume_2d_Kpp_GridBox_Values
 
-SUBROUTINE CHEM_SO2_OH_PLUME( dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box )
+SUBROUTINE CHEM_SO2_OH_PLUME( dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box, chem_status, chem_debug_value)
   !-------------------------------------------------------------------
   ! Do one implicit chemistry step for:
   !
@@ -5117,6 +5426,10 @@ SUBROUTINE CHEM_SO2_OH_PLUME( dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box 
   INTEGER,         INTENT(IN)  :: i_y
   INTEGER,         INTENT(IN)  :: i_box ! Print debug info
 
+  ! Outputs
+  INTEGER,         INTENT(OUT) :: chem_status
+  REAL(fp),        INTENT(OUT) :: chem_debug_value
+
   ! In/Out concentrations, molec/cm3 
   REAL(fp),        INTENT(INOUT) :: SO2
   REAL(fp),        INTENT(INOUT) :: OH
@@ -5133,6 +5446,7 @@ SUBROUTINE CHEM_SO2_OH_PLUME( dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box 
   !REAL(fp), PARAMETER            :: tiny = 1.0d-300
   REAL(fp), PARAMETER            :: tiny = 100.0_fp * epsilon(1.0_fp)
 
+  chem_status  = 0
   ! Save old values
   SO2_old      = max(SO2, 0.0_fp)
   OH_old       = max(OH , 0.0_fp)
@@ -5141,18 +5455,24 @@ SUBROUTINE CHEM_SO2_OH_PLUME( dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box 
 
   ! (Double check) Typical background level SO2 is ~1E6, [OH] is ~1E1, K=1E-13
   IF (SO2_old <= SO2_min) THEN
-    Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
-    Write (6, *) "Debug: (BZ) Skip plume chem due to low SO2 conc: ", SO2_old
+    !Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
+    !Write (6, *) "Debug: (BZ) Skip plume chem due to low SO2 conc: ", SO2_old
+    chem_debug_value = SO2_old
+    chem_status = 1
     RETURN
   ENDIF
   IF (OH_old  <= OH_min ) THEN
-    Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
-    Write (6, *) "Debug: (BZ) Skip plume chem due to low OH conc: ", OH_old
+    !Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
+    !Write (6, *) "Debug: (BZ) Skip plume chem due to low OH conc: ", OH_old
+    chem_debug_value = OH_old
+    chem_status = 2
     RETURN
   ENDIF
   IF (dt * K * SO2_old * OH_old <= x_min) THEN
-    Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
-    Write (6, *) "Debug: (BZ) Skip plume chem due to low K[SO2][OH]dt: ", dt * K * SO2_old * OH_old
+    !Write (6, *) "Debug: (BZ): At plume grid [x, y, box]", i_x, i_y, i_box
+    !Write (6, *) "Debug: (BZ) Skip plume chem due to low K[SO2][OH]dt: ", dt * K * SO2_old * OH_old
+    chem_debug_value = dt * K * SO2_old * OH_old
+    chem_status = 3
     RETURN
   ENDIF
   ! Backward Euler coefficients
@@ -5204,7 +5524,7 @@ FUNCTION GET_PLUME_SPC_ID(name) RESULT(id)
   END DO
 END FUNCTION GET_PLUME_SPC_ID
 
-! TOMAS related subrontine and functions below
+! TOMAS related subroutine and functions below
 ! ----------------------------------------------------------------------------
 ! ----------------------------------------------------------------------------
 ! Copied from GEOS-Chem TOMAS_mod.F90
@@ -5313,7 +5633,7 @@ END FUNCTION GET_PLUME_SPC_ID
 !
 ! !INPUT PARAMETERS:
 !
-    REAL*4,  INTENT(IN)    :: RHTOMAS
+    REAL(fp),  INTENT(IN)    :: RHTOMAS
 !
 ! !INPUT/OUTPUT PARAMETERS:
 !
@@ -5352,7 +5672,8 @@ END FUNCTION GET_PLUME_SPC_ID
        ! Add condition for srtnacl in case of running so4 only. (win, 5/8/06)
        if (srtnacl.gt.0) then
           naclmass=Mke(k,srtnacl) !already as kg nacl - no conv necessary
-          wrnacl=waternacl(rhe)
+          ! wrnacl=waternacl(rhe)
+          wrnacl = 1.e+0_fp
        else
           naclmass = 0.e+0_fp
           wrnacl = 1.e+0_fp
@@ -5360,7 +5681,8 @@ END FUNCTION GET_PLUME_SPC_ID
 
        if (srtocil.gt.0) then
           ocilmass=Mke(k,srtocil) !already as kg ocil - no conv necessary
-          wrocil=waterocil(rhe)
+          ! wrocil=waterocil(rhe)
+          wrocil = 1.e+0_fp
        else
           ocilmass = 0.e+0_fp
           wrocil = 1.e+0_fp
@@ -5453,4 +5775,5081 @@ END FUNCTION GET_PLUME_SPC_ID
     endif
 
   END FUNCTION WATERSO4
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: spinup
+!
+! !DESCRIPTION: Function SPINUP retuns .TRUE. or .FALSE. whether or not the
+!  current time in the run have passed the spin-up period.  This would be used
+!  to determine if certain errors should be fixed and let slipped or to stop a
+!  run with an error message.  (win, 8/2/07)
+!  ====> Be cautious that TIMEBEGIN should be changed according to
+!         whatever your spin-up beginning time is
+!  Example of TIMEBEGIN (in julian time)
+!         2001/07/01 = 144600.0
+!         2000/11/01 = 138792.0
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION SPINUP( DAYS ) RESULT( VALUE )
+!
+! !USES:
+!
+    USE TIME_MOD,     ONLY : GET_TAU , GET_TAUb
+!
+! !INPUT PARAMETERS:
+!
+    REAL*4,    INTENT(IN) :: DAYS   ! Spin-up duration (day)
+!
+! !RETURN VALUE:
+!
+    LOGICAL               :: VALUE
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    REAL*4                 :: TIMENOW, TIMEBEGIN, TIMEINIT, HOURS
+
+    !========================================================================
+    ! SPINUP begins here!
+    !========================================================================
+
+    TIMENOW   = GET_TAU()   ! Current time in the run (Julian time) (hrs)
+    TIMEBEGIN = GET_TAUb()  ! Begin time of this run (hrs)
+    TIMEINIT  = 141000. !2/1/2001    ! Start time for spin-up (hrs)
+    HOURS = DAYS * 24.0     ! Period allow error to pass (hrs)
+
+    ! Criteria to let error go or to terminate the run
+    !IF ( TIMENOW > MIN( TIMEBEGIN, TIMEINIT ) + HOURS  ) THEN
+    IF ( TIMENOW > TIMEBEGIN + HOURS  ) THEN
+       VALUE = .FALSE.
+    ELSE
+       VALUE = .TRUE.
+    ENDIF
+
+  END FUNCTION SPINUP
+!EOC
+  !------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: eznh3eqm
+!
+! !DESCRIPTION: Subroutine EZNH3REQM2 puts ammonia to the particle phase until
+!  there is 2 moles of ammonium per mole of sulfate and the remainder
+!  of ammonia is left in the gas phase. (win, 9/30/08)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE EZNH3EQM( Gce, Mke )
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(INOUT)  :: Gce(ICOMPHARD) !sfarina - fixed incorrect definition of Gc array
+    REAL(fp),  INTENT(INOUT)  :: Mke(nBins,ICOMPHARD)
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    integer       ::  ibin
+    REAL(fp)        :: tot_nh3  !total kmoles of ammonia
+    REAL(fp)        :: tot_so4  !total kmoles of so4
+    REAL(fp)        :: sfrac    !fraction of sulfate that is in that bin
+
+    !========================================================================
+    ! EZNH3EQM begins here!
+    !========================================================================
+
+    ! get the total number of kmol nh3
+    tot_nh3 = Gce(srtnh4)/17.e+0_fp
+    do ibin=1,nBins
+       tot_nh3 = tot_nh3 + Mke(ibin,srtnh4)/18.e+0_fp
+    enddo
+
+    ! get the total number of kmol so4
+    tot_so4 = 0.e+0_fp
+    do ibin=1,nBins
+       tot_so4 = tot_so4 + Mke(ibin,srtso4)/96.e+0_fp
+    enddo
+
+    ! see if there is free ammonia
+    if (tot_nh3/2.e+0_fp.lt.tot_so4)then  ! no free ammonia
+       Gce(srtnh4) = 0.e+0_fp ! no gas phase ammonia
+       do ibin=1,nBins
+          sfrac = Mke(ibin,srtso4)/96.e+0_fp/tot_so4
+          Mke(ibin,srtnh4) = sfrac*tot_nh3*18.e+0_fp ! put the ammonia where the sulfate is
+          ! Debug
+          !if ( Mke(k,srtnh4) < 0.0 ) then
+          !   print *,'negative gas phase ammonia in eznh3eqm!!'
+          !   print *,'bin  ', k
+          !endif
+       enddo
+    else ! free ammonia
+       do ibin=1,nBins
+          Mke(ibin,srtnh4) = Mke(ibin,srtso4)/96.e+0_fp*2.e+0_fp*18.e+0_fp ! fill the particle phase
+          ! Debug
+          !if ( Mke(k,srtnh4) < 0.0 ) then
+          !   print *,'negative gas phase ammonia in eznh3eqm!!'
+          !   print *,'bin  ', k
+          !endif
+       enddo
+       Gce(srtnh4) = (tot_nh3 - tot_so4*2.e+0_fp)*17.e+0_fp ! put whats left over in the gas phase
+       ! Debug
+       !if ( Gce(srtnh4) < 0.0 ) then
+       !   print *,'negative gas phase ammonia in eznh3eqm!!'
+       !endif
+
+    endif
+
+    RETURN
+
+  END SUBROUTINE EZNH3EQM
+
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: storenm
+!
+! !DESCRIPTION: Subroutine STORENM stores values of Nk and Mk into Nkd and Mkd
+!  for diagnostic purposes.  Also do gas phase concentrations. (win, 7/23/07)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd )
+!
+! !INPUT PARAMETERS:
+!
+    REAL(fp),INTENT(IN)    :: Nk(nBins)
+    REAL(fp),INTENT(IN)    :: Mk(nBins, ICOMPHARD)
+    REAL(fp),INTENT(IN)    :: Gc(ICOMPHARD)
+!
+! !OUTPUT PARAMETERS:
+!
+    REAL(fp),INTENT(OUT)   :: Nkd(nBins)
+    REAL(fp),INTENT(OUT)   :: Mkd(nBins, ICOMPHARD)
+    REAL(fp),INTENT(OUT)   :: Gcd(ICOMPHARD)
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    INTEGER             :: J, K
+
+    !sfarina
+    DO J= 1, ICOMPHARD
+       Gcd(J)=Gc(J)
+    ENDDO
+    DO K = 1, nBins
+       Nkd(K)=Nk(K)
+       DO J= 1, ICOMPHARD
+          Mkd(K,J)=Mk(K,J)
+       ENDDO
+    ENDDO
+
+    RETURN
+
+  END SUBROUTINE STORENM
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: mnfix
+!
+! !DESCRIPTION: Subroutine MNFIX examines the mass and number distrubution and
+!  determine if any bins have an average mass outside their normal range.  This
+!  can happen because some process, e.g. advection, seems to treat the mass and
+!  number species inconsistently.  If any bins are out of range, I shift some
+!  mass and number to a new bin in a way that conserves both. (win, 7/23/07)
+!  Originally written by Peter Adams, September 2000
+!  Modified for GEOS-CHEM by Win Trivitayanurak (win@cmu.edu)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE MNFIX ( NK, MK, ERRORSWITCH )
+!
+! !USES:
+!
+    USE ERROR_MOD,    ONLY : ERROR_STOP, IT_IS_NAN
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(INOUT) :: NK(nBins),  MK(nBins, ICOMPHARD)
+    LOGICAL, INTENT(INOUT) :: ERRORSWITCH
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    integer             :: K,J,KK !counters
+    integer             :: NEWBIN !bin number into which mass is shifted
+    REAL(fp)            :: XOLD, XNEW !average masses of old and new bins
+    REAL(fp)            :: DRYMASS !dry mass of in a bin
+    REAL(fp)            :: AVG !average dry mass of particles in bin
+    REAL(fp)            :: NUM_INITIAL !number of particles initially in problem bin
+    REAL(fp)            :: NSHIFT  !number to shift to new bin
+    REAL(fp)            :: MSHIFT !mass to shift to new bin
+    REAL(fp)            :: FJ !fraction of mass that is component j
+    REAL(fp)            :: save1,save2,save3,save4,save5
+    REAL(fp), PARAMETER :: EPS  = 1.e-20_fp !small number for Nk
+    REAL(fp), PARAMETER :: EPS2 = 1.e-28_fp !small number for Mk
+    REAL(fp), PARAMETER :: TINY = 1.e-36_fp !small number
+    REAL(fp), PARAMETER :: VTINY= 1.e-50_fp !very small number
+
+    LOGICAL             :: FIXERROR
+    LOGICAL             :: PRT
+    REAL(fp)            :: TOTMAS, TOTNUM !for print debug
+
+    !=================================================================
+    ! MNFIX begins here!
+    !=================================================================
+
+    FIXERROR = .TRUE.
+    PRT = .FALSE.
+    PRT = ERRORSWITCH !just carrying a signal to print out value at the observed box - since mnfix does not have any information about I,J,L location. (Win, 9/27/05)
+    ERRORSWITCH = .FALSE.
+    PRT = .FALSE.             !TO AVOID THE HUGE AMOUNT OF PRINTING (JKodros 6/2/15)
+    !xk(1)=xk(2)/2.e+0_fp  ! jrp for some reason xk(1) is changing?!
+    save1=xk(1)
+
+    ! Check for any incoming negative values or NaN
+    !--------------------------------------------------------------------------
+    DO K = 1, nBins
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'11 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'11 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'11 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+       IF ( NK(K) < 0e+0_fp ) THEN
+          IF ( PRT ) THEN
+             PRINT *,'MNFIX[0]: FOUND NEGATIVE N'
+             PRINT *, 'Bin, N', K, NK(K)
+          ENDIF
+          IF ( ABS(NK(K)) < 1e+0_fp .and. FIXERROR ) THEN
+             NK(K) = 0e+0_fp
+             IF ( PRT ) PRINT *,'Negative N < -1.0 Reset to zero'
+          ELSE
+             ERRORSWITCH = .TRUE.
+             print *,'MNFIX(0): Found negative Nk(',k,') >-1e+0_fp'
+             GOTO 300          !exit mnfix if found negative error (win, 4/18/06)
+          ENDIF
+       ENDIF
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( MK(K,J) < 0e+0_fp ) THEN
+             IF ( PRT ) THEN
+                PRINT *,'MNFIX[0]: FOUND NEGATIVE M'
+                PRINT *,'Bin, Comp, Mk', K, J, MK(K,J)
+             ENDIF
+             IF( ABS(MK(K,J)) < 1e-5_fp .and. FIXERROR ) THEN
+                MK(K,J) = 0e+0_fp
+                IF ( PRT ) PRINT *,'Negative M < -1.d-5 Reset to zero'
+             ELSE
+                ERRORSWITCH =.TRUE.
+                print *,'MNFIX(0): Found negative Mk(',k,',comp',j,')'
+                GOTO 300       !exit mnfix if found negative error (win, 4/18/06)
+             ENDIF
+          ENDIF
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO                   !icomp
+    ENDDO                     !ibins
+    save2=xk(1)
+
+    ! JRP check for neg numbers
+    !DO K = 1,IBINS
+    !  IF (NK(K) < 0.e+0_fp) THEN
+    !     print*,'1 NK < 0 in MNFIX',K,NK(K)
+    !  ENDIF
+    !  DO J=1,ICOMP
+    !     IF (MK(K,J) < 0.e+0_fp) THEN
+    !        print*,'1 MK < 0 in MNFIX',K,J,MK(K,J)
+    !     ENDIF
+    !  ENDDO
+    !  IF ( IT_IS_NAN(NK(K)) ) THEN
+    !     PRINT *,'11 Found Nan in Nk at bin',K
+    !     ERRORSWITCH = .TRUE.
+    !     print *,'11 MNFIX(0): Found NaN in Nk(,',k,')'
+    !     GOTO 300
+    !  ENDIF
+    !  DO J = 1, ICOMP
+    !     IF ( IT_IS_NAN(MK(K,J)) ) THEN
+    !        PRINT *,'11 Found Nan in Mk at bin',K,'component',J
+    !        ERRORSWITCH = .TRUE.
+    !        GOTO 300
+    !     ENDIF
+    !  ENDDO
+    !ENDDO
+
+    ! Check if both number and mass are zero, if yes then exit mnfix.
+    !----------------------------------------------------------------
+    TOTNUM = 0e+0_fp
+    TOTMAS = 0e+0_fp
+    DO K = 1,nBins
+       TOTNUM = TOTNUM + NK(K)
+       DO J=1,ICOMPHARD-2
+          TOTMAS = TOTMAS + MK(K,J)
+       ENDDO
+    ENDDO
+    IF ( TOTNUM == 0e+0_fp .AND. TOTMAS == 0e+0_fp ) THEN
+       IF ( PRT ) PRINT *,'MNFIX: Nk=Mk=0. Exit now'
+       GOTO 300
+    ENDIF
+
+    ! If number is tiny ( < EPS) then set it to zero
+    !DO K = 1,IBINS
+    !   IF ( NK(K) <= EPS ) THEN
+    !      NK(K) = 0e+0_fp
+    !      DO J= 1, ICOMP-1
+    !         MK(K,J) = 0e+0_fp
+    !      ENDDO               !STOP  !original (win, 9/1/05)
+    !   ENDIF
+    !ENDDO
+
+    ! If N is tiny and M is tiny, set both to zeroes
+    !--------------------------------------------------------
+    DO K = 1, nBins
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'22 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'22 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'22 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+       IF ( NK(K) <= EPS .AND. NK(K)>= 0e+0_fp ) THEN
+          !print*,'1111'
+          !print*,k,EPS,xk(K),xk(K+1)
+          !print*,'word up'
+          NK(K) = EPS
+          !NK(K) = 0.e+0_fp
+          !DO J = 1, ICOMP-IDIAG
+          DO J = 1, ICOMPHARD
+             if (J .eq. 1) then
+                !MK(K,J) = EPS*sqrt(xk(K)*xk(K+1))
+                MK(K,J) = EPS*AVGMASS(k)
+                !MK(K,J) = 0.e+0_fp
+             else
+                MK(K,J) = VTINY
+             endif
+          enddo
+          !print*,'allbins',MK(:,1)
+       ENDIF ! If tiny number
+       TOTMAS = SUM(MK(K,1:ICOMPHARD-2))
+       if (TOTMAS.lt.eps2) then
+          !print*,'2222'
+          NK(K) = EPS
+          !NK(K) = 0.e+0_fp
+          DO J = 1, ICOMPHARD
+             !DO J = 1, ICOMP-IDIAG
+             if (J .eq. 1) then
+                !MK(K,J) = EPS*sqrt(xk(K)*xk(K+1))
+                MK(K,J) = EPS*AVGMASS(k)
+                !MK(K,J) = 0.e+0_fp
+             else
+                MK(K,J) = VTINY
+             endif
+          enddo
+       endif
+    ENDDO
+    save3=xk(1)
+
+    ! JRP check for neg numbers
+    DO K = 1,nBins
+       IF (NK(K) < 0.e+0_fp) THEN
+          print*,'2 NK < 0 in MNFIX',K,NK(K)
+       ENDIF
+       DO J=1,ICOMPHARD
+          IF (MK(K,J) < 0.e+0_fp) THEN
+             print*,'2 MK < 0 in MNFIX',K,J,MK(K,J)
+          ENDIF
+       ENDDO
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'2 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'2 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'2 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+    ENDDO
+
+    ! Check to see if any bins are completely out of bounds for min or max bin
+    !-------------------------------------------------------------------------
+    DO K = 1, nBins
+       DRYMASS = 0.e+0_fp
+       DO J = 1, ICOMPHARD-2
+          DRYMASS = DRYMASS + MK(K,J)
+       ENDDO
+
+       IF ( NK(k) == 0e+0_fp ) THEN
+          !AVG = SQRT( xk(K)* xk(K+1) )
+          AVG = SQRT( AVGMASS(k) )
+       ELSE
+          AVG = DRYMASS/ NK(K)
+       ENDIF
+
+       IF ( AVG >  xk(nBins+1) ) THEN
+          IF ( PRT ) PRINT *, 'MNFIX [1]: AVG > Xk(ibins+1) at bin',K
+          IF ( FIXERROR ) THEN
+             !out of bin range - remove some mass
+             MSHIFT = NK(k)* xk(nBins+1)/ 1.2
+             DO J= 1, ICOMPHARD
+                MK(K,J) = MK(K,J)* MSHIFT/ (DRYMASS+EPS2)
+             ENDDO
+          ELSE
+             ERRORSWITCH = .TRUE.
+             print *,'MNFIX(1): AVG>Xk(ibins+1) at bin',K
+             GOTO 300
+          ENDIF
+       ENDIF
+       IF ( AVG < xk(1)) THEN
+          IF( PRT ) PRINT *,'MNFIX [2]: AVG < Xk(1)'
+          IF( FIXERROR ) THEN
+             !out of bin range - remove some number
+             NK(K) = DRYMASS/ ( xk(1)* 1.2 )
+          ELSE
+             ERRORSWITCH = .TRUE.
+             print *,'MNFIX(1): AVG < Xk(1) at bin',K
+             GOTO 300
+          ENDIF
+       ENDIF
+    ENDDO
+
+    ! JRP check for neg numbers
+    DO K = 1,nBins
+       IF (NK(K) < 0.e+0_fp) THEN
+          print*,'3 NK < 0 in MNFIX',K,NK(K)
+       ENDIF
+       DO J=1,ICOMPHARD
+          IF (MK(K,J) < 0.e+0_fp) THEN
+             print*,'3 MK < 0 in MNFIX',K,J,MK(K,J)
+          ENDIF
+       ENDDO
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'3 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'3 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'3 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+    ENDDO
+    save4=xk(1)
+
+    !if (PRT) then !<step5.1-temp>
+    !   print *,'After_Check2 ---------------------'
+    !   do k=1,ibins
+    !      totmas = sum(MK(k,1:icomp-1))
+    !      print *, totmas,NK(k), totmas/NK(k)
+    !   enddo
+    !endif
+
+    !print*,1,NK(1),NK(2)
+    !print*,1,MK(1,:)
+    !print*,1,MK(2,:)
+
+    ! Check to see if any bins are out of bounds
+    !-------------------------------------------------------------------
+    DO K = 1, nBins
+       !if (PRT) print *,'Now at bin',k !<step4.4>tmp (win, 9/28/05)
+
+       DRYMASS = 0.e+0_fp
+       DO J = 1, ICOMPHARD-2
+          DRYMASS = DRYMASS + MK(K,J)
+       ENDDO
+
+       IF ( NK(K) == 0e+0_fp ) THEN
+          !AVG = SQRT(xk(K)*xk(K+1)) !set to mid-range value
+          AVG = AVGMASS(k) !set to mid-range value
+       ELSE
+          AVG = DRYMASS/NK(K)
+       ENDIF
+
+       !if (PRT) then     !<step5.1-temp>
+       !   print *,'After_Check3---------------------'
+       !   totmas = sum(MK(k,1:icomp-1))
+       !   print *, totmas,NK(k), totmas/NK(k)
+       !endif
+
+       ! If over boundary of the current bin
+       IF ( AVG >  xk(K+1) ) THEN
+          IF ( PRT ) PRINT *, 'MNFIX [3]: AVG>Xk(',K+1,')'
+          !IF ( PRT ) CALL DEBUGPRINT(NK,MK,0,0,0,'inside MNFIX')
+          IF ( FIXERROR ) THEN
+             !Average mass is too high - shift to higher bin
+             !KK = K + 1 ! jrp, this was causing errors
+             !ERRORSWITCH=.TRUE.
+             KK = K
+             XNEW = xk(KK+1)/ 1.1
+             if ( PRT ) PRINT *, 'k',k,'AVG',AVG,' XNEW ',XNEW
+100          IF ( XNEW <= AVG ) THEN
+                IF ( KK < nBins ) THEN
+                   KK = KK + 1
+                   XNEW = xk(KK+1)/ 1.1
+                   if (PRT) PRINT *, '..move up to bin ',KK,' XNEW ',XNEW
+                   GOTO 100
+                ELSE
+                   ! Already reach highest bin - must remove some mass (win, 8/1/07)
+                   ! Updated by jrp 3/1/2012
+                   MSHIFT = NK(k)* xk(k+1)/ 1.1
+                   if( PRT ) PRINT*,' Mass being discarded: '
+                   DO J= 1, ICOMPHARD
+                      !if (PRT)
+                      !print*,'Removing mass in MNFIX',MSHIFT, DRYMASS
+                      MK(K,J) = MK(K,J)* MSHIFT/ (DRYMASS)
+                   ENDDO
+                   ! and recalculate dry mass (win, 8/1/07)
+                   DRYMASS = 0.e+0_fp ! jrp fix 2/29/12
+                   DO J = 1, ICOMPHARD-2
+                      DRYMASS = DRYMASS + MK(K,J)
+                   ENDDO
+                   GOTO 111
+                ENDIF
+             ENDIF
+
+             if(PRT)print*,'Old NK',NK(k),'Old DRYMASS',DRYMASS,'bin',k
+
+             !XOLD = SQRT( xk(K)* xk(K+1) )
+             XOLD = AVGMASS(k)
+             NUM_INITIAL = NK(K)
+             NSHIFT = ( DRYMASS - XOLD * NUM_INITIAL )/ ( XNEW - XOLD )
+             MSHIFT = XNEW * NSHIFT
+             NK(K) = NK(K) - NSHIFT
+             NK(KK) =NK(KK) + NSHIFT
+
+             if(prt) then
+                print*,'NSHIFT',NSHIFT, 'MSHIFT',MSHIFT
+                print*,'New NK',k,NK(k),' Nk(kk)',kk,NK(kk)
+                print*,'Total mass bin',k,sum(MK(k,1:ICOMPHARD-2))
+                print*,'SO4 mass bin  ',k,(MK(k,srtso4))
+                print*,'Total mass bin',kk,sum(MK(kk,1:ICOMPHARD-2))
+                print*,'SO4 mass bin  ' ,kk,(MK(kk,srtso4))
+             endif
+
+             DO J = 1, ICOMPHARD-2
+                FJ = MK(K,J)/ DRYMASS
+                MK(K,J) = XOLD * NK(K) * FJ
+                MK(KK,J) = MK(KK,J) + MSHIFT * FJ
+             ENDDO
+
+             if(prt) then
+                print*,'After shift mass'
+                print*,'Total mass bin',k,sum(MK(k,1:ICOMPHARD-2))
+                print*,'SO4 mass bin  ',k,(MK(k,srtso4))
+                print*,'Total mass bin',kk,sum(MK(kk,1:ICOMPHARD-2))
+                print*,'SO4 mass bin  ',kk,(MK(kk,srtso4))
+             endif
+
+          ELSE
+             ERRORSWITCH = .TRUE.
+             PRINT *, 'MNFIX(3) : AVG>Xk(',K+1,')'
+             GOTO 300
+          ENDIF    ! Fixerror
+       ENDIF       ! AVG > Xk(k+1)
+
+       !if (PRT) then     !<step5.1-temp>
+       !   print *,'After_Check4---------------------'
+       !   totmas = sum(MK(k,1:icomp-1))
+       !   print *, totmas,NK(k), totmas/NK(k)
+       !endif
+
+       ! If under boundary of the current bin
+111    IF ( AVG <  xk(K) ) THEN
+          IF ( PRT ) PRINT *,'MNFIX [4]: AVG<Xk(',K,')'
+          IF ( FIXERROR ) THEN
+             !average mass is too low - shift number to lower bin
+             !KK = K - 1 ! jrp potential for errors here
+             KK = K
+             XNEW = xk(KK)* 1.1
+200          IF ( XNEW >= AVG ) THEN
+                IF ( KK > 1 ) THEN
+                   KK = KK - 1
+                   XNEW = xk(KK)* 1.1
+                   GOTO 200
+                ELSE
+                   ! Already reach lowest bin - must remove some number (win, 8/1/07)
+                   NK(K) = DRYMASS/ ( xk(1)* 1.2 )
+                   GOTO 222
+                ENDIF
+             ENDIF
+             !XOLD = SQRT(xk(K)* xk(K+1))
+             XOLD = AVGMASS(k)
+             NUM_INITIAL = NK(K)
+             NSHIFT = NUM_INITIAL - DRYMASS/XOLD !(win, 10/20/08)
+             !Prior to 10/20/08 (win)
+             !NSHIFT = (DRYMASS - XOLD * NUMBER)/ ( XNEW - XOLD )
+             MSHIFT = XNEW * NSHIFT
+             NK(K) = NK(K) - NSHIFT
+             NK(KK) = NK(KK) + NSHIFT
+             DO J=1,ICOMPHARD
+                FJ = MK(K,J)/ DRYMASS
+                MK(K,J) = XOLD * NK(K) * FJ
+                MK(KK,J) = MK(KK,J) + MSHIFT * FJ
+             ENDDO
+
+          ELSE
+             ERRORSWITCH = .TRUE.
+             PRINT *, 'MNFIX(4): AVG < Xk(',k,')'
+             GOTO 300
+          ENDIF
+222    ENDIF
+
+       !if (PRT) then     !<step5.1-temp>
+       !   print *,'After_Check5---------------------'
+       !   totmas = sum(MK(k,1:icomp-1))
+       !   print *, totmas,NK(k), totmas/NK(k)
+       !endif
+       !if (PRT) print *,MK(k,1),NK(k), MK(k,1)/NK(k),'Check5'!<step4.4>tmp (win, 9/28/05)
+
+    ENDDO ! loop bin
+    save5=xk(1)
+
+    !print*,2,NK(1),NK(2)
+    !print*,2,MK(1,:)
+    !print*,2,MK(2,:)
+
+    ! JRP check for neg numbers
+    DO K = 1,nBins
+       IF (NK(K) < 0.e+0_fp) THEN
+          print*,'4 NK < 0 in MNFIX',K,NK(K)
+       ENDIF
+       DO J=1,ICOMPHARD
+          IF (MK(K,J) < 0.e+0_fp) THEN
+             print*,'4 MK < 0 in MNFIX',K,J,MK(K,J)
+             print*,'saved xk1s',save1,save2,save3,save4,save5
+             print*,'xk',xk
+          ENDIF
+       ENDDO
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'4 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'4 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'4 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+    ENDDO
+
+    !if (PRT) then !<step5.1-temp>
+    ! Catch any small negative values resulting from fixing
+    !--------------------------------------------------------------------------
+    DO K = 1, nBins
+       IF ( NK(K) < 0e+0_fp ) THEN
+          IF ( PRT ) THEN
+             PRINT *,'MNFIX[5]: FOUND NEGATIVE N'
+             PRINT *, 'Bin, N', K, NK(K)
+          ENDIF
+          IF ( ABS(NK(K)) < 1e+0_fp .and. FIXERROR ) THEN
+             NK(K) = 0e+0_fp
+             IF ( PRT ) PRINT *,'Negative N > -1.0 Reset to zero'
+          ELSE
+             ERRORSWITCH = .TRUE.
+             PRINT *, 'MNFIX(5): Negative N after fixing at bin',k
+             GOTO 300          !exit mnfix if found negative error (win, 4/18/06)
+          ENDIF
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( MK(K,J) < 0e+0_fp ) THEN
+             IF ( PRT ) THEN
+                PRINT *,'MNFIX[6]: FOUND NEGATIVE M'
+                PRINT *,'Bin, Comp, Mk', K, J, MK(K,J)
+             ENDIF
+             IF( ABS(MK(K,J)) < 1D-5 .and. FIXERROR ) THEN
+                MK(K,J) = 0e+0_fp
+                IF ( PRT ) PRINT *,'Negative M > -1.d-5 Reset to zero'
+             ELSE
+                ERRORSWITCH =.TRUE.
+                PRINT *, 'MNFIX(6): Negative M after fixing at bin',k
+                GOTO 300       !exit mnfix if found negative error (win, 4/18/06)
+             ENDIF
+          ENDIF
+       ENDDO                   !icomp
+    ENDDO                     !ibins
+
+    ! JRP check for neg numbers
+    DO K = 1,nBins
+       IF (NK(K) < 0.e+0_fp) THEN
+          print*,'5 NK < 0 in MNFIX',K,NK(K)
+       ENDIF
+       DO J=1,ICOMPHARD
+          IF (MK(K,J) < 0.e+0_fp) THEN
+             print*,'5 MK < 0 in MNFIX',K,J,MK(K,J)
+          ENDIF
+       ENDDO
+       IF ( IT_IS_NAN(NK(K)) ) THEN
+          PRINT *,'5 Found Nan in Nk at bin',K
+          ERRORSWITCH = .TRUE.
+          print *,'5 MNFIX(0): Found NaN in Nk(,',k,')'
+          GOTO 300
+       ENDIF
+       DO J = 1, ICOMPHARD
+          IF ( IT_IS_NAN(MK(K,J)) ) THEN
+             PRINT *,'5 Found Nan in Mk at bin',K,'component',J
+             ERRORSWITCH = .TRUE.
+             GOTO 300
+          ENDIF
+       ENDDO
+    ENDDO
+
+    ! Check any last inconsistent M=0 or N=0
+    !--------------------------------------------------------
+    DO K = 1, nBins
+       DRYMASS = 0.e+0_fp
+       DO J = 1, ICOMPHARD-2
+          DRYMASS = DRYMASS + MK(K,J)
+       ENDDO
+       IF ( NK(K) /= 0e+0_fp .AND. DRYMASS == 0e+0_fp .or. &
+            NK(K) == 0e+0_fp .AND. DRYMASS /= 0e+0_fp     ) THEN
+          PRINT *, '5.5 set nk, mk to ZERO for all bins'
+          DO J = 1, ICOMPHARD
+             MK(K,J)=0.e+0_fp
+             NK(K) = 0.e+0_fp
+          ENDDO
+          MK(K,ICOMPHARD) = 0.e+0_fp !Set aerosol water to zero too
+       ENDIF                  ! If tiny number
+    ENDDO
+
+    ! JRP check for neg numbers
+    DO K = 1,nBins
+       IF (NK(K) < 0.e+0_fp) THEN
+          print*,'6 NK < 0 in MNFIX',K,NK(K)
+          STOP
+       ENDIF
+       DO J=1,ICOMPHARD
+          IF (MK(K,J) < 0.e+0_fp) THEN
+             print*,'6 MK < 0 in MNFIX',K,J,MK(K,J)
+             STOP
+          ENDIF
+       ENDDO
+    ENDDO
+
+300 CONTINUE
+
+    IF (ERRORSWITCH) THEN
+555    FORMAT (3E15.5E2)
+       WRITE(6,*)'END OF MNFIX ( WHERE? )'
+       WRITE(6,*)'DRYMAS-excl-NH4  NK      DRYMASS/NK'
+       DO K = 1,nBins
+          TOTMAS = SUM(MK(K,1:ICOMPHARD-1))
+          !PRINT *, TOTMAS,NK(K), TOTMAS/NK(K)
+       ENDDO
+
+       !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+       !%%% NOTE: NK will be IBINS+1 upon exiting the loop, which will cause an
+       !%%% out-of-bounds error.  Comment this out for now, unless it should be
+       !%%% inserted into the DOloop
+       !WRITE(6,555)
+       !        TOTMAS, NK(K),
+       !        TOTMAS/ NK(K)
+       !print*,'-----------'
+       !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+       !call debugprint( NK, MK, 0,0,0,'End of MNFIX')
+
+       !write(*,*)'Nk'
+       !write(*,*) NK(1:30)
+       !write(*,*)'Mk(srtso4)'
+       !write(*,*) MK(1:30,srtso4)
+       !write(*,*)'Mk(srth2o)'
+       !write(*,*) MK(1:30,srth2o)
+       !STOP 'Negative Nk or Mk at after mnfix'  !comment out this to make it stop outside mnfix so that I can print out the i,j,l (location) of the error (win, 9/1/05)
+    ENDIF
+
+    RETURN
+
+  END SUBROUTINE MNFIX
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: cond_nuc
+!
+! !DESCRIPTION: This subroutine calculates the change in the aerosol size
+!  distribution due to so4 condensation and binary/ternary nucleation during
+!  the overal microphysics timestep.
+!  WRITTEN BY Jeff Pierce, May 2007 for GISS GCM-II'
+!  Put in GEOS-Chem by Win T. 9/30/08
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE COND_NUC(Nki,Mki,Gci,Nkf,Mkf,Gcf,fnavg,fn1avg, &
+                      H2SO4rate,dti,num_iter,Nknuc,Mknuc,Nkcond,Mkcond, &
+                      ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, PRES, &
+                      RHTOMAS, errswitch, lev)
+!
+! !INPUT PARAMETERS:
+!
+    ! Nki(nBins)            - number of particles per size bin in grid cell
+    ! Nnuci                 - number of nucleation size particles per size bin in
+    !                         grid cell
+    ! Mnuci                 - mass of given species in nucleation pseudo-bin
+    !                         (kg/grid cell)
+    ! Mki(nBins, ICOMPHARD) - mass of a given species per size bin/grid cell
+    ! Gci(icomp)            - amount (kg/grid cell) of all species present in the
+    !                         gas phase except water
+    ! H2SO4rate             - rate of H2SO4 chemical production [kg s^-1]
+    ! dt                    - total model time step to be taken (s)
+    REAL(fp) Nki(nBins), Mki(nBins, ICOMPHARD), Gci(ICOMPHARD)
+    double precision H2SO4rate
+    real(fp)             dti
+!
+! !OUTPUT PARAMETERS:
+!
+    ! Nkf, Mkf, Gcf  - same as above, but final values
+    ! Nknuc,  Mknuc  - same as above, final values from just nucleation
+    ! Nkcond, Mkcond - same as above, but final values from just condensation
+    ! fn, fn1
+    REAL(fp) Nkf(nBins), Mkf(nBins, ICOMPHARD), Gcf(ICOMPHARD)
+    REAL(fp) Nknuc(nBins), Mknuc(nBins, ICOMPHARD)
+    REAL(fp) Nkcond(nBins),Mkcond(nBins,ICOMPHARD)
+    double precision fnavg        ! nucleation rate of clusters cm-3 s-1
+    double precision fn1avg       ! formation rate of particles to first size bin cm-3 s-1
+    REAL(fp)           BOXVOL, BOXMASS, TEMPTMS, RHTOMAS, PRES
+    logical          errswitch    ! signal for error
+    integer          lev          ! layer of the model
+    REAL(fp)   surf_area
+    REAL(fp)   ionrate
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    double precision dti_db
+    integer          i,j,k,c      ! counters
+    double precision fn           ! nucleation rate of clusters cm-3 s-1
+    double precision fn1          ! formation rate of particles to first size bin cm-3 s-1
+    double precision pi, R        ! pi and gas constant (J/mol K)
+    double precision CSi,CSa      ! intial and average condensation sinks
+    double precision CS1,CS2      ! guesses for condensation sink [s^-1]
+    double precision CStest       ! guess for condensation sink
+    REAL(fp)           Nk1(nBins), Mk1(nBins, ICOMPHARD), Gc1(ICOMPHARD)
+    REAL(fp)           Nk2(nBins), Mk2(nBins, ICOMPHARD), Gc2(ICOMPHARD)
+    REAL(fp)           Nk3(nBins), Mk3(nBins, ICOMPHARD), Gc3(ICOMPHARD)
+    logical          nflg         ! returned from nucleation, says whether nucleation occurred or not
+    double precision mcond,mcond1 ! mass to condense [kg]
+    double precision tol          ! tolerance
+    double precision eps          ! small number
+    double precision sinkfrac(nBins) ! fraction of condensation sink coming from bin k
+    double precision totmass      ! the total mass of H2SO4 generated during the timestep
+    double precision tmass
+    double precision CSch         ! fractional change in condensation sink
+    double precision CSch_tol     ! tolerance in change in condensation sink
+    double precision addt         ! adaptive timestep time
+    double precision time_rem     ! time remaining
+    integer          num_iter     ! number of iteration
+    double precision sumH2SO4     ! used for finding average H2SO4 conc over timestep
+    integer          iter         ! number of iteration
+    double precision rnuc         ! critical radius [nm]
+    double precision gasConc      ! gas concentration [kg]
+    double precision mass_change  ! change in mass during nucleation
+    double precision total_nh4_1,total_nh4_2
+    double precision min_tstep    ! minimum timestep [s]
+    integer          nuc_bin      ! the nucleation bin
+    double precision sumfn, sumfn1 ! used for getting average nucleation rates
+    logical          tempvar,  pdbg
+    real(fp)           tnumb
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654, R=8.314) !pi and gas constant (J/mol K)
+    parameter(eps=1E-40)
+    parameter(CSch_tol=0.01)
+    parameter(min_tstep=1.0e+0_fp)
+
+    !=================================================================
+    ! COND_NUC begins here
+    !=================================================================
+
+    pdbg      = errswitch ! transfer the signal to print debug from outside
+    errswitch = .false.   ! flag error to outide to terminate program.
+
+    dti_db = dble(dti)
+
+    ! Initialize values of Nkf, Mkf, Gcf, and time
+    do j=1,ICOMPHARD
+       Gc1(j)=Gci(j)
+       Gcf(j)=Gci(j)
+    enddo
+    do k=1,nBins
+       Nk1(k)=Nki(k)
+       Nknuc(k)=Nki(k)
+       Nkcond(k)=Nki(k)
+       do j=1,ICOMPHARD
+          Mk1(k,j)=Mki(k,j)
+          Mknuc(k,j)=Mki(k,j)
+          Mkcond(k,j)=Mki(k,j)
+       enddo
+    enddo
+
+    ! Get initial condensation sink
+    CS1 = 0.e+0_fp
+    call getCondSink(Nk1,Mk1,srtso4,CS1,sinkfrac,surf_area,BOXVOL,TEMPTMS,PRES)
+    if( pdbg) print*,'CS1', CS1
+    !CS1 = max(CS1,eps)
+
+    !Get initial H2SO4 concentration guess (assuming no nucleation)
+    !Make sure that H2SO4 concentration doesn't exceed the amount generated
+    !during that timestep (this will happen when the condensation sink is very low)
+
+    ! get the steady state H2SO4 concentration
+    call getH2SO4conc(Nk1, Mk1, H2SO4rate, CS1, Gc1(srtnh4), &
+                      gasConc, ionrate, surf_area, &
+                      BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+    if( pdbg) print*,'gasConc',gasConc
+    Gc1(srtso4) = gasConc
+    addt = min_tstep
+    !addt = 3600.e+0_fp
+    totmass = H2SO4rate*addt*96.e+0_fp/98.e+0_fp
+
+    tempvar = pdbg
+
+    !Get change size distribution due to nucleation with initial guess
+    call nucleation(Nk1,Mk1,Gc1,Nk2,Mk2,Gc2,fn,fn1,totmass,nuc_bin, &
+                    addt, ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, &
+                    PRES, RHTOMAS, PDBG, lev)
+
+    if(pdbg) then
+       print*,'COND_NUC: Found an error at nucleation --> TERMINATE'
+       errswitch = .true.
+       return
+    endif
+    pdbg = tempvar !put the print debug switch back to pdbg
+    !if(pdbg) call debugprint(Nk2, Mk2, 0,0,0,'After nucleation[1]')
+
+    !print*,'after nucleation'
+    !print*,'Nnuc1',Nnuc1
+    !print*,'Nnuc2',Nnuc2
+    !print*,'Mnuc1',Mnuc1
+    !print*,'Mnuc2',Mnuc2
+
+    mass_change = 0.e+0_fp
+
+    do k=1,nBins
+       mass_change = mass_change + (Mk2(k,srtso4)-Mk1(k,srtso4))
+    enddo
+    if( pdbg)  print*,'mass_change',mass_change
+
+    mcond = totmass-mass_change ! mass of h2so4 to condense
+
+    if( pdbg) print*,'after nucleation'
+    if( pdbg)  print*,'totmass',totmass,'mass_change1',mass_change,'mcond',mcond
+    if( pdbg)  print*,'cs1',CS1, Gc1(srtso4)
+
+    if (mcond.lt.0.e+0_fp)then
+       tmass = 0.e+0_fp
+       do k=1,nBins
+          do j=1,ICOMPHARD-2
+             tmass = tmass + Mk2(k,j)
+          enddo
+       enddo
+       !if (abs(mcond).gt.tmass*1.0D-8) then
+       if (abs(mcond).gt.totmass*1.0e-8_fp) then
+          if (-mcond.lt.Mk2(nuc_bin,srtso4)) then
+             !if (CS1.gt.1.0D-5)then
+             !   print*,'budget fudge 1 in cond_nuc'
+             !endif
+             tmass = 0.e+0_fp
+             do j=1,ICOMPHARD-2
+                tmass = tmass + Mk2(nuc_bin,j)
+             enddo
+             Nk2(nuc_bin) = Nk2(nuc_bin)*(tmass+mcond)/tmass
+             Mk2(nuc_bin,srtso4) = Mk2(nuc_bin,srtso4) + mcond
+             mcond = 0.e+0_fp
+          else
+             print*,'budget fudge 2 in cond_nuc'
+             do k=2,nBins
+                Nk2(k) = Nk1(k)
+                Mk2(k,srtso4) = Mk1(k,srtso4)
+             enddo
+             Nk2(1) = Nk1(1)+totmass/sqrt(xk(1)*xk(2))
+             Mk2(1,srtso4) = Mk1(1,srtso4) + totmass
+             mcond = 0.e+0_fp
+             !print*,'mcond < 0 in cond_nuc', mcond, totmass
+             !stop
+          endif
+       else
+          mcond = 0.e+0_fp
+       endif
+    endif
+
+    !if (mcond.lt.0.e+0_fp)then
+    !   print*,'mcond < 0 in cond_nuc', mcond
+    !   stop
+    !endif
+    tmass = 0.e+0_fp
+    do k=1,nBins
+       do j=1,ICOMPHARD-2
+          tmass = tmass + Mk2(k,j)
+       enddo
+    enddo
+    if( pdbg)  print*, 'mcond',mcond,'tmass',tmass,'nuc',Nk2(1)-Nk1(1)
+    tempvar = pdbg
+
+    ! Get guess for condensation
+    call ezcond(Nk2,Mk2,mcond,srtso4,Nk3,Mk3,surf_area, &
+                BOXVOL, TEMPTMS, PRES, pdbg )
+
+    if(pdbg) then
+       print*,'COND_NUC: Found an error at EZCOND --> TERMINATE'
+       errswitch = .true.
+       return
+    endif
+    pdbg = tempvar
+    ! if(pdbg) call debugprint(Nk3, Mk3, 0,0,0,'After EZCOND[1]')
+    !print*,'after ezcond',Nk2,Nk3
+    !jrp mcond1 = 0.e+0_fp
+    !jrp do k=1,ibins
+    !jrp    do j=1,icomp
+    !jrp       mcond1 = mcond1 + (Mk3(k,j)-Mk2(k,j))
+    !jrp    enddo
+    !jrp enddo
+    !print*,'mcond',mcond,'mcond1',mcond1
+
+    Gc3(srtnh4) = Gc1(srtnh4)
+
+    call eznh3eqm(Gc3,Mk3)
+    call ezwatereqm(Mk3, RHTOMAS)
+
+    ! check to see how much condensation sink changed
+    call getCondSink(Nk3,Mk3,srtso4,CS2,sinkfrac,surf_area, &
+                     BOXVOL,TEMPTMS, PRES)
+    CSch = abs(CS2 - CS1)/CS1
+
+    !if (CSch.gt.CSch_tol) then ! condensation sink didn't change much use whole timesteps
+    ! get starting adaptive timestep to not allow condensationk sink
+    ! to change that much
+    ! Avoid div-by-zero (bmy, 1/28/14)
+    IF ( ABS( CSch ) > 0e+0_fp ) THEN
+       addt = addt*CSch_tol/CSch/2e+0_fp
+    ELSE
+       addt = 0e+0_fp
+    ENDIF
+    addt = min(addt,dti_db)
+    addt = max(addt,min_tstep)
+
+    time_rem = dti_db ! time remaining
+    if( pdbg)    print*,'addt',addt,time_rem
+    num_iter = 0
+    sumH2SO4=0.e+0_fp
+    sumfn = 0.e+0_fp
+    sumfn1 = 0.e+0_fp
+    ! do adaptive timesteps
+    do while (time_rem .gt. 0.e+0_fp)
+       num_iter = num_iter + 1
+       if( pdbg) print*, 'iter', num_iter, ' addt', addt, 'time_rem', time_rem
+       ! get the steady state H2SO4 concentration
+       if (num_iter.gt.1)then ! no need to recalculate for first step
+          call getH2SO4conc(Nk1, Mk1, H2SO4rate, CS1, Gc1(srtnh4), &
+                            gasConc, ionrate, surf_area, &
+                            BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+          Gc1(srtso4) = gasConc
+       endif
+       if( pdbg)    print*,'gasConc',gasConc
+
+       sumH2SO4 = sumH2SO4 + Gc1(srtso4)*addt
+       totmass = H2SO4rate*addt*96.e+0_fp/98.e+0_fp
+       !call nucleation(Nk1,Mk1,Gc1,Nnuc1,Mnuc1,totmass,addt,Nk2, &
+       !                Mk2,Gc2,Nnuc2,Mnuc2,nflg,lev)
+
+       !Debug to see what goes in nucleation (win, 10/3/08)
+       if(pdbg) then
+          print*,'Temperature',TEMPTMS,'RH',RHTOMAS
+          print*,'H2SO4',Gc1(srtso4)/boxvol*1000.e+0_fp/98.e+0_fp*6.022e+23_fp
+          print*,'NH3ppt',Gc1(srtnh4)/17.e+0_fp/(boxmass/29.e+0_fp)*1e+12_fp
+       endif
+
+       tempvar = pdbg
+       call nucleation(Nk1,Mk1,Gc1,Nk2,Mk2,Gc2,fn,fn1,totmass, &
+                       nuc_bin,addt, ionrate, surf_area, BOXVOL, BOXMASS, &
+                       TEMPTMS, PRES, RHTOMAS, PDBG, lev)
+
+       if(pdbg) then
+          print*,'COND_NUC: Error at nucleation[2] --> TERMINATE'
+          errswitch=.true.
+          return
+       endif
+       pdbg = tempvar
+       ! if(pdbg) call debugprint(Nk2, Mk2, 0,0,0, 'After nucleation[2]')
+       !print*,'after nucleation iter'
+       sumfn = sumfn + fn*addt
+       sumfn1 = sumfn1 + fn1*addt
+
+       !total_nh4_1 = Mnuc1(srtnh4)
+       !total_nh4_2 = Mnuc2(srtnh4)
+       !do i=1,ibins
+       !   total_nh4_1 = total_nh4_1 + Mk1(i,srtnh4)
+       !   total_nh4_2 = total_nh4_2 + Mk2(i,srtnh4)
+       !enddo
+       !print*,'total_nh4',total_nh4_1,total_nh4_2
+
+       mass_change = 0.e+0_fp
+
+       do k=1,nBins
+          mass_change = mass_change + (Mk2(k,srtso4)-Mk1(k,srtso4))
+       enddo
+       if( pdbg)    print*,'mass_change2',mass_change
+
+       mcond = totmass-mass_change ! mass of h2so4 to condense
+
+       !print*,'after nucleation'
+       !print*,'totmass',totmass,'mass_change',mass_change,'mcond',mcond
+
+       !print*,'2 mass_change',mass_change,mcond,totmass
+       !print*,'2 cs1',CS1, Gc1(srtso4)
+
+       if (mcond.lt.0.e+0_fp)then
+          tmass = 0.e+0_fp
+          do k=1,nBins
+             do j=1,ICOMPHARD-2
+                tmass = tmass + Mk2(k,j)
+             enddo
+          enddo
+          !if (abs(mcond).gt.tmass*1.0D-8) then
+          if (abs(mcond).gt.totmass*1.0e-8_fp) then
+             if (-mcond.lt.Mk2(nuc_bin,srtso4)) then
+                !if (CS1.gt.1.0D-5)then
+                !   print*,'budget fudge 1 in cond_nuc'
+                !endif
+                tmass = 0.e+0_fp
+                do j=1,ICOMPHARD-2
+                   tmass = tmass + Mk2(nuc_bin,j)
+                enddo
+                Nk2(nuc_bin) = Nk2(nuc_bin)*(tmass+mcond)/tmass
+                Mk2(nuc_bin,srtso4) = Mk2(nuc_bin,srtso4) + mcond
+                mcond = 0.e+0_fp
+             else
+                print*,'budget fudge 2 in cond_nuc'
+                do k=2,nBins
+                   Nk2(k) = Nk1(k)
+                   Mk2(k,srtso4) = Mk1(k,srtso4)
+                enddo
+                Nk2(1) = Nk1(1)+totmass/sqrt(xk(1)*xk(2))
+                Mk2(1,srtso4) = Mk1(1,srtso4) + totmass
+                print*,'mcond < 0 in cond_nuc', mcond, totmass
+                mcond = 0.e+0_fp
+                ! should I stop or not?? (win, 10/4/08)
+                !stop
+                ! change from stop here to stop outside with more info (win, 10/4/08)
+                print*,'COND_NUC: --> TERMINATE'
+                !10/4/08 errswitch = .true.
+                !10/4/08 return
+             endif
+          else
+             mcond = 0.e+0_fp
+          endif
+       endif
+
+       do k=1,nBins
+          Nknuc(k) = Nknuc(k)+Nk2(k)-Nk1(k)
+          do j=1,ICOMPHARD-2
+             Mknuc(k,j)=Mknuc(k,j)+Mk2(k,j)-Mk1(k,j)
+          enddo
+       enddo
+
+       !Gc2(srtnh4) = Gc1(srtnh4)
+       !call eznh3eqm(Gc2,Mk2,Mnuc2)
+       !call ezwatereqm(Mk2,Mnuc2)
+
+       !call getCondSink(Nk2,Mk2,Nnuc2,Mnuc2,srtso4,CStest,sinkfrac)
+
+       ! Before entering ezcond, check if there's enough aerosol to
+       ! condense onto. After several iteration in the case with high
+       ! H2SO4 amount but little existing aerosol and also lack the conditions
+       ! for nucleation, the whole size distribution is grown out of our
+       ! tracked size bins, so let's exit the loop if there is no aerosol
+       ! to condense onto anymore. (win, 10/4/08)
+       tmass = 0.e+0_fp
+       tnumb = 0.e+0_fp
+       do k=1,nBins
+          tnumb = tnumb + Nk2(k)
+          do j=1,ICOMPHARD-2
+             tmass = tmass + Mk2(k,j)
+          enddo
+       enddo
+
+       if( (tmass+mcond)/tnumb  > Xk(nBins) ) then
+          if( .not. SPINUP(10.0) ) then
+             print*,'Not enough aerosol for condensation!'
+             print*,'  Exiting COND_NUC iteration with '
+             print*,time_rem,'sec remaining time'
+          endif
+
+          Gc3(srtnh4)=Gc2(srtnh4)
+          do k=1,nBins
+             Nk3(k)=Nk2(k)
+             do j=1,ICOMPHARD
+                Mk3(k,j)=Mk2(k,j)
+             enddo
+          enddo
+          goto 100
+       endif
+
+       tempvar = pdbg
+
+       call ezcond(Nk2,Mk2,mcond,srtso4,Nk3,Mk3,surf_area, &
+                   BOXVOL, TEMPTMS, PRES, pdbg)
+       do k=1,nBins
+          Nkcond(k) = Nkcond(k)+Nk3(k)-Nk2(k)
+          do j=1,ICOMPHARD-2
+             Mkcond(k,j)=Mkcond(k,j)+Mk3(k,j)-Mk2(k,j)
+          enddo
+       enddo
+       Gc3(srtnh4) = Gc1(srtnh4)
+
+       if(pdbg) then
+          print*,'COND_NUC: Error at EZCOND[2] --> TERMINATE'
+          errswitch=.true.
+          return
+       endif
+       pdbg = tempvar
+
+       !if(pdbg) call debugprint(Nk3, Mk3, 0,0,0,'After EZCOND[2]')
+
+       if( pdbg)    print*,'after ezcond iter'
+       call eznh3eqm(Gc3,Mk3)
+       call ezwatereqm(Mk3, RHTOMAS)
+
+       ! check to see how much condensation sink changed
+       call getCondSink(Nk3,Mk3,srtso4,CS2,sinkfrac,surf_area, &
+                        BOXVOL,TEMPTMS, PRES)
+
+       time_rem = time_rem - addt
+       if (time_rem .gt. 0.e+0_fp) then
+          CSch = abs(CS2 - CS1)/CS1
+          !jrp if (CSch.lt.0.e+0_fp) then
+          !jrp    print*,''
+          !jrp    print*,'CSch LESS THAN ZERO!!!!!', CS1,CStest,CS2
+          !jrp    print*,'Nnuc',Nnuc1,Nnuc2
+          !jrp    print*,''
+          !jrp
+          !jrp    addt = min(addt,time_rem)
+          !jrp else
+
+          ! Allow adaptive timestep to change
+          ! Avoid div-by-zero error
+          IF ( ABS( CSch ) > 0e+0_fp ) THEN
+             addt = min(addt*CSch_tol/CSch,addt*1.5e+0_fp)
+          ELSE
+             addt = 0e+0_fp
+          ENDIF
+
+          ! allow adaptive timestep to change again
+          addt = min(addt,time_rem)
+          addt = max(addt,min_tstep)
+          !jrp endif
+          if( pdbg)     print*,'CS1',CS1,'CS2',CS2
+          CS1 = CS2
+          Gc1(srtnh4)=Gc3(srtnh4)
+          do k=1,nBins
+             Nk1(k)=Nk3(k)
+             do j=1,ICOMPHARD
+                Mk1(k,j)=Mk3(k,j)
+             enddo
+          enddo
+       endif
+    enddo ! while loop
+
+100 continue
+
+    Gcf(srtso4)=sumH2SO4/dti_db
+    fnavg = sumfn/dti_db
+    fn1avg = sumfn1/dti_db
+    if( pdbg)    print*,'AVERAGE GAS CONC',Gcf(srtso4)
+
+    !jrp else
+    !jrp    num_iter = 1
+    !jrp    Gcf(srtso4)=Gc1(srtso4)
+    !jrp endif
+
+    if( pdbg) print*, 'cond_nuc num_iter =', num_iter
+    !T0M(1,1,1,3) = double(num_iter) ! store iterations here
+
+    ! if(pdbg) call debugprint(Nk3, Mk3, 0,0,0,'End of COND_NUC')
+
+    do k=1,nBins
+       Nkf(k)=Nk3(k)
+       do j=1,ICOMPHARD
+          Mkf(k,j)=Mk3(k,j)
+       enddo
+    enddo
+    Gcf(srtnh4)=Gc3(srtnh4)
+
+    return
+
+  END SUBROUTINE COND_NUC
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: nucleation
+!
+! !DESCRIPTION: This subroutine calls the Vehkamaki 2002 and Napari 2002
+!  nucleation parameterizations and gets the binary and ternary nucleation
+!  rates. The number of particles added to the first size bin is calculated
+!  by comparing the growth rate of the new particles to the coagulation sink.
+!  WRITTEN BY Jeff Pierce, April 2007 for GISS GCM-II'
+!  Introduce to GEOS-Chem by Win Trivitayanurak (win, 9/30/08)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE NUCLEATION(Nki,Mki,Gci,Nkf,Mkf,Gcf,fn,fn1,totsulf, &
+                        nuc_bin,dt,ionrate, surf_area, BOXVOL, BOXMASS, &
+                        TEMPTMS, PRES, RHTOMAS, pdbg,lev)
+!
+! !USES:
+!
+    USE ERROR_MOD,      ONLY : ERROR_STOP, IT_IS_NAN
+!
+! !INPUT PARAMETERS:
+!
+    !Initial values of
+    !=================
+    !Nki(ibins) - number of particles per size bin in grid cell
+    !Mki(ibins, icomp) - mass of a given species per size bin/grid cell
+    !Gci(icomp-1) - amount (kg/grid cell) of all species present in the
+    !               gas phase except water
+    !dt - total model time step to be taken (s)
+    double precision Nki(nBins), Mki(nBins, ICOMPHARD), Gci(ICOMPHARD-1)
+    REAL(fp), INTENT(IN)       :: BOXVOL,  BOXMASS, TEMPTMS
+    REAL(fp), INTENT(IN)       :: PRES,    RHTOMAS
+!
+! !OUTPUT PARAMETERS:
+!
+    !Nkf, Mkf, Gcf - same as above, but final values
+    !fn, fn1
+    double precision Nkf(nBins), Mkf(nBins, ICOMPHARD), Gcf(ICOMPHARD-1)
+    integer j,i,k
+    double precision totsulf
+    integer nuc_bin
+    double precision dt
+    double precision fn       ! nucleation rate of clusters cm-3 s-1
+    double precision fn1      ! formation rate of particles to first size bin cm-3 s-1
+
+    LOGICAL  PDBG             ! Signal print for debug
+    integer lev ! layer of model
+
+    REAL(fp)                     ionrate
+    REAL(fp)                     surf_area
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    double precision nh3ppt   ! gas phase ammonia in pptv
+    double precision h2so4    ! gas phase h2so4 in molec cc-1
+    double precision rnuc     ! critical nucleation radius [nm]
+    double precision gtime    ! time to grow to first size bin [s]
+    double precision ltc, ltc1, ltc2 ! coagulation loss rates [s-1]
+    double precision Mktot    ! total mass in bin
+    double precision neps
+    double precision meps
+    double precision density  ! density of particle [kg/m3]
+    double precision pi
+    double precision frac     ! fraction of particles growing into first size bin
+    double precision d1,d2    ! diameters of particles [m]
+    double precision mp       ! mass of particle [kg]
+    double precision mold     ! saved mass in first bin
+    double precision mnuc     !mass of nucleation
+    double precision sinkfrac(nBins) ! fraction of loss to different size bins
+    double precision nadd     ! number to add
+    double precision CS       ! kerminan condensation sink [m-2]
+    double precision Dpmean   ! the number wet mean diameter of the existing aerosol
+    double precision Dp1      ! the wet diameter of bin 1
+    double precision dens1    ! density in bin 1 [kg m-3]
+    double precision GR       ! growth rate [nm hr-1]
+    double precision gamma,eta ! used in kerminen 2004 parameterzation
+    double precision drymass,wetmass,WR
+    double precision fn_c     ! barrierless nucleation rate
+    double precision h1,h2,h3,h4,h5,h6
+    double precision dum1,dum2,dum3,dum4   ! dummy variables
+    double precision rhin,tempin ! rel hum in
+
+    LOGICAL ERRORSWITCH
+!
+! !DEFINED PARAMETERS:
+!
+    parameter (neps=1E8, meps=1E-8)
+    parameter (pi=3.14159)
+
+    !=================================================================
+    ! NUCLEATION begins here
+    !=================================================================
+
+    errorswitch = .false.
+
+    h2so4 = Gci(srtso4)/boxvol*1000.e+0_fp/98.e+0_fp*6.022e+23_fp
+    nh3ppt = Gci(srtnh4)/17.e+0_fp/(boxmass/29.e+0_fp)*1e+12_fp* &
+             PRES/101325.*273./TEMPTMS ! corrected for pressure (because this should be concentration)
+
+    fn = 0.e+0_fp
+    fn1 = 0.e+0_fp
+    rnuc = 0.e+0_fp
+    gtime = 0.e+0_fp
+    nuc_bin = 1 ! added by Pengfei Liu,initialize  nuc_bin value
+    ! if requirements for nucleation are met, call nucleation subroutines
+    ! and get the nucleation rate and critical cluster size
+    if (h2so4.gt.1.e+4_fp) then
+       if (nh3ppt.gt.0.1.and.tern_nuc.eq.1) then
+          call napa_nucl(TEMPTMS,RHTOMAS,h2so4,nh3ppt,fn,rnuc) !ternary nuc
+          if (ion_nuc.eq.1.and.ionrate.ge.1.e+0_fp) then
+             !call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+             !              h1,h2,h3,h4,h5,h6)
+          else
+             h1=0.e+0_fp
+          endif
+          if (h1.gt.fn)then
+             fn=h1
+             rnuc=h5
+          endif
+       elseif (bin_nuc.eq.1) then
+          call vehk_nucl(TEMPTMS,RHTOMAS,h2so4,fn,rnuc) !binary nuc
+          if ((ion_nuc.eq.1).and.(ionrate.ge.1.e+0_fp)) then
+          !   call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+          !                 h1,h2,h3,h4,h5,h6)
+          else
+             h1=0.e+0_fp
+          endif
+          if (h1.gt.fn)then
+             fn=h1
+             rnuc=h5
+          endif
+          if (fn.lt.1.0e-6_fp)then
+             fn = 0.e+0_fp
+          endif
+       elseif ((ion_nuc.eq.1).and.(ionrate.ge.1.e+0_fp)) then
+          !call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+          !              h1,h2,h3,h4,h5,h6)
+          fn=h1
+          rnuc=h5
+       elseif(ion_nuc.eq.2) then
+          ! Yu Ion nucleation
+          !! first we need to calculate the available surface area
+          !surf_area = 0.e+0_fp
+          !do k=1, ibins
+          !   if (Nki(k) .gt. Neps) then
+          !      Mktot=0.e+0_fp
+          !      do j=1,icomp
+          !         Mktot=Mktot+Mki(k,j)
+          !      enddo
+          !      mp=Mktot/Nki(k)
+          !      density=aerodens(Mki(k,srtso4),0.e+0_fp, &
+          !                       Mki(k,srtnh4),0.e+0_fp,Mki(k,srth2o))  ! assume bisulfate
+          !      ! diameter = ((mass/density)*(6/pi))**(1/3)
+          !      d2 = 1.D6*((mp/density)*(6.D0/pi))**(1.D0/3.D0) ! (micrometers)
+          !      ! surface area per particle = pi*diameter**2
+          !      surf_area = surf_area + 1.D-6*(Nki(k)/boxvol)* &
+          !                              pi*(d2**2.D0) ! (um2 cm-2)
+          !   endif
+          !enddo
+          rhin=dble(RHTOMAS*100.e+0_fp)
+          tempin=dble(TEMPTMS)
+
+          !call YUJIMN(h2so4, rhin, tempin, ionrate, surf_area, &
+          !            fn, dum1, rnuc, dum2)
+          fn=0.
+          rnuc=1E-9
+       endif
+       !if((act_nuc.eq.1).and.(lev.le.7))then
+          !call bl_nucl(h2so4,fn,rnuc)
+       !endif
+       call cf_nucl(TEMPTMS,RHTOMAS,h2so4,nh3ppt,fn_c) ! use barrierless nucleation as a max
+       fn = min(fn,fn_c)
+       !if (fn.gt.1.0)then
+       !   print*, 'fn',fn
+       !   print*, 'Yu Yes!'
+       !   print*, 'ionrate',ionrate
+       !   print*, 'surf_area',surf_area
+       !endif
+    endif
+
+    if (pdbg) then
+       if( bin_nuc == 1 ) then
+          print *, 'BINARY cluster form rate : fn',fn
+       else
+          print *, 'TERNARY cluster form rate: fn',fn
+       endif
+    endif
+
+    ! if nucleation occured, see how many particles grow to join the first size
+    ! section
+    if (fn.gt.0.e+0_fp) then
+
+       if(pdbg) print*,'Nki',Nki
+       if(pdbg) print*,'Mki',Mki
+
+       call getCondSink_kerm(Nki,Mki,CS,Dpmean,Dp1,dens1,BOXVOL,TEMPTMS,PRES)
+
+       if(pdbg) print*,'CS',CS,'Dpmean',Dpmean,'Dp1',Dp1,'dens1',dens1
+
+       d1 = rnuc*2.e+0_fp*1e-9_fp
+       drymass = 0.e+0_fp
+       do j=1,ICOMPHARD-2
+          drymass = drymass + Mki(1,j)
+       enddo
+       wetmass = 0.e+0_fp
+       do j=1,ICOMPHARD
+          wetmass = wetmass + Mki(1,j)
+       enddo
+
+       ! to prevent division by zero (win, 10/1/08)
+       if(drymass == 0.e+0_fp) then
+          WR = 1.e+0_fp
+       else
+          WR = wetmass/drymass
+       endif
+
+       if(pdbg) print*,'rnuc',rnuc,'WR',WR
+       if(pdbg) print*,'d1',d1,'Gci(srtso4)',Gci(srtso4),&
+                       'TEMP',temptms,'boxvol',boxvol
+
+       if( IT_IS_NAN( Gci(srtso4) )) then
+          print*,'rnuc',rnuc,'WR',WR
+          print*,'d1',d1,'Gci(srtso4)',Gci(srtso4)
+          call ERROR_STOP('Found NaN in Gci','nucleation')
+       endif
+       ! print*,'[nucleation] Gci',Gci
+       call getGrowthTime(d1,Dp1,Gci(srtso4)*WR,TEMPTMS, &
+                          boxvol,dens1,gtime)
+       if (pdbg) print*,'gtime',gtime
+
+       GR = (Dp1-d1)*1e+9_fp/gtime*3600.e+0_fp ! growth rate, nm hr-1
+
+       gamma = 0.23e+0_fp*(d1*1.0e+9_fp)**(0.2e+0_fp)* &
+               (Dp1*1.0d9/3.e+0_fp)**0.075e+0_fp* &
+               (Dpmean*1.0e+9_fp/150.e+0_fp)** &
+               0.048e+0_fp*(dens1*1.0e-3_fp)** &
+               (-0.33e+0_fp)*(TEMPTMS/293.e+0_fp) ! equation 5 in kerminen
+       eta = gamma*CS/GR
+
+       if (Dp1.gt.d1)then
+          fn1 = fn*exp(eta/(Dp1*1.0e+9_fp)-eta/(d1*1.0e+9_fp))
+       else
+          fn1 = fn
+       endif
+
+       if (pdbg) print*,'eta',eta,'Dp1',Dp1,'d1',d1,'fn1',fn1
+
+       mnuc = sqrt(xk(1)*xk(2))
+
+       nadd = fn1
+
+       nuc_bin = 1
+
+       mold = Mki(nuc_bin,srtso4)
+       Mkf(nuc_bin,srtso4) = Mki(nuc_bin,srtso4)+nadd*mnuc*boxvol*dt
+       Nkf(nuc_bin) = Nki(nuc_bin)+nadd*boxvol*dt
+
+       Gcf(srtso4) = Gci(srtso4) ! - (Mkf(nuc_bin,srtso4)-mold)
+       Gcf(srtnh4) = Gci(srtnh4)
+
+       if (pdbg) then
+          print*, 'nadd',nadd
+          print *,'Mass add to bin',nuc_bin,'=',nadd*mnuc*boxvol*dt
+          print *,'Number added',nadd*boxvol*dt
+          print *,'Gcf(srtso4)',Gcf(srtso4)
+          print *,'Gcf(srtnh4)',Gcf(srtnh4)
+       endif
+
+       do k=1,nBins
+          if (k .ne. nuc_bin)then
+             Nkf(k) = Nki(k)
+             do i=1,ICOMPHARD
+                Mkf(k,i) = Mki(k,i)
+             enddo
+          else
+             do i=1,ICOMPHARD
+                if (i.ne.srtso4) then
+                   Mkf(k,i) = Mki(k,i)
+                endif
+             enddo
+          endif
+       enddo
+
+       do k=1,nBins
+          if (Nkf(k).lt.1.e+0_fp) then
+             Nkf(k) = 0.e+0_fp
+             do j=1,ICOMPHARD
+                Mkf(k,j) = 0.e+0_fp
+             enddo
+          endif
+       enddo
+       !print *, 'mnfix in tomas_mod:2679'
+
+       call mnfix(Nkf,Mkf, ERRORSWITCH)
+       pdbg = errorswitch ! carry the error signal from mnfix to outside
+       if (errorswitch) print*,'NUCLEATION: Error after mnfix'
+
+       ! there is a chance that Gcf will go less than zero because we are
+       ! artificially growing particles into the first size bin.
+       ! don't let it go less than zero.
+
+    else
+
+       do k=1,nBins
+          Nkf(k) = Nki(k)
+          do i=1,ICOMPHARD
+             Mkf(k,i) = Mki(k,i)
+          enddo
+       enddo
+
+    endif
+
+    pdbg = errorswitch        ! carry the error signal from mnfix to outside
+
+    RETURN
+
+  END SUBROUTINE NUCLEATION
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: multicoag
+!
+! !DESCRIPTION:
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE MULTICOAG( DT, Nk, Mk, BOXVOL, PRES, TEMPTMS, PDBG )
+!
+! !INPUT PARAMETERS:
+!
+    REAL(fp),    INTENT(IN)     :: DT                ! Time step (s)
+    REAL(fp),    INTENT(IN)     :: PRES
+    REAL(fp),    INTENT(IN)     :: TEMPTMS
+    REAL(fp),    INTENT(IN)     :: BOXVOL
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(INOUT)  :: Nk(nBins)
+    REAL(fp),  INTENT(INOUT)  :: Mk(nBins, ICOMPHARD)
+    LOGICAL,   INTENT(INOUT)  :: PDBG              ! For signalling print debug
+!
+! !REMARKS:
+!  Some key variables
+!  kij represents the coagulation coefficient (cm3/s) normalized by the
+!      volume of the GCM grid cell (boxvol, cm3) such that its units are (s-1)
+!  dNdt and dMdt are the rates of change of Nk and Mk.  xk contains
+!     the mass boundaries of the size bins.  xbar is the average mass
+!     of a given size bin (it varies with time in this algorithm).  phi
+!     and eff are defined in the reference, equations 13a and b.
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    INTEGER     :: K, J, I, JJ
+    REAL(fp)    :: dNdt(nBins), dMdt(nBins,ICOMPHARD-2)
+    REAL(fp)    :: xbar(nBins), phi(nBins), eff(nBins)
+    REAL*4      :: kij(nBins,nBins)
+    REAL*4      :: Dpk(nBins)             !diameter (m) of particles in bin k
+    REAL*4      :: Dk(nBins)              !Diffusivity (m2/s) of bin k particles
+    REAL*4      :: ck(nBins)              !Mean velocity (m/2) of bin k particles
+    REAL*4      :: olddiff                !used to iterate to find diffusivity
+    REAL*4      :: density                !density (kg/m3) of particles
+    REAL*4      :: mu                     !viscosity of air (kg/m s)
+    REAL*4      :: mfp                    !mean free path of air molecule (m)
+    REAL*4      :: Kn                     !Knudsen number of particle
+    REAL(fp)    :: mp                     !particle mass (kg)
+    REAL*4      :: beta                   !correction for coagulation coeff.
+    !      real(fp), external ::   aerodens  !<tmp> try change to double precision (win, 1/4/06)
+
+    !temporary summation variables
+    REAL(fp)    :: k1m(ICOMPHARD-2),k1mx(ICOMPHARD-2)
+    REAL(fp)    :: k1mx2(ICOMPHARD-2)
+    REAL(fp)    :: k1mtot,k1mxtot
+    REAL(fp)    :: sk2mtot, sk2mxtot
+    REAL(fp)    :: sk2m(ICOMPHARD-2), sk2mx(ICOMPHARD-2)
+    REAL(fp)    :: sk2mx2(ICOMPHARD-2)
+    REAL(fp)    :: High_in
+    REAL(fp)    :: mtotal, mktot
+
+    REAL*4      :: zeta                      !see reference, eqn 6
+    REAL*4      :: tlimit, dtlimit, itlimit  !fractional change in M/N allowed in one time step
+    REAL*4      :: dts  !internal time step (<dt for stability)
+    REAL*4      :: tsum !time so far
+    REAL(fp)    :: Neps !minimum value for Nk
+!dbg
+    character*12 limit        !description of what limits time step
+
+    REAL(fp)    :: mi, mf   !initial and final masses
+
+#if defined(TOMAS12) || defined(TOMAS15)
+    parameter(zeta=1.28125 , dtlimit=0.25, itlimit=10.)
+#else
+    parameter(zeta=1.0625, dtlimit=0.25, itlimit=10.)
+#endif
+    REAL*4      ::pi, kB  !kB is Boltzmann constant (J/K)
+    REAL*4      ::R       !gas constant (J/ mol K)
+    parameter (pi=3.141592654, kB=1.38e-23, R=8.314, Neps=1.0e-3)
+
+    REAL(fp)      :: M_NH4
+
+    LOGICAL     :: ERRSPOT
+
+    !sfarina
+1   format(16E15.3)
+
+    !=================================================================
+    ! MULTICOAG begins here!
+    !=================================================================
+    tsum = 0.0
+
+    ! If any Nk are zero, then set them to a small value to avoid division by zero
+    do k=1,nBins
+       if (Nk(k) .lt. Neps) then
+          Nk(k)=Neps
+#if defined(TOMAS12) || defined(TOMAS15)
+          Mk(k,srtso4)=Neps*sqrt( xk(k)*xk(k+1) ) !make the added particles SO4
+#else
+          Mk(k,srtso4)=Neps*1.4e+0_fp*xk(k) !make the added particles SO4
+#endif
+       endif
+    enddo
+
+    ! Calculate air viscosity and mean free path
+    mu=2.5277e-7*temptms**0.75302
+    mfp=2.0*mu/(pres*sqrt(8.0*0.0289/(pi*R*temptms)))  !S&P eqn 8.6
+
+    !<temp>
+    !write(6,*)'+++ Nk(1:30)    =',Nk(1:30)
+    !write(6,*)'+++ Mk(1:30,SO4)=',Mk(1:30,srtso4)
+    !write(6,*)'+++ Mk(1:30,H2O)=',Mk(1:30,srth2o)
+    !if (pdbg) call debugprint(Nk,Mk,0,0,0,'Inside MULTICOAG')
+    ! Calculate particle sizes and diffusivities
+    do k=1,nBins
+
+       IF ( SRTNH4 > 0 ) THEN
+          M_NH4 = Mk(k,SRTNH4)
+       ELSE
+          M_NH4 = 0.1875e+0_fp*Mk(k,srtso4)  !assume bisulfate
+       ENDIF
+       !tmp write(6,*)'+++ multicoag:  Mk(',k,'srtso4)=',Mk(k,srtso4)
+       !density=aerodens(Mk(k,srtso4),0.e+0_fp, M_NH4,        &
+       !        Mk(k,srtnacl), Mk(k,srtecil), Mk(k,srtecob),  &
+       !        Mk(k,srtocil), Mk(k,srtocob), Mk(k,srtdust),  &
+       !        Mk(k,srth2o))     !use Mk for sea salt mass(win, 4/18/06)
+      density=aerodens(Mk(k,srtso4),0.e+0_fp, M_NH4,        &
+               0.e+0_fp,0.e+0_fp,0.e+0_fp,  &
+               0.e+0_fp,0.e+0_fp,0.e+0_fp, &
+               Mk(k,srth2o))
+       !Update mp calculation to include all species (win, 4/18/06)
+
+       !prior to 9/26/08 (win)
+       !Mktot=0.1875e+0_fp*Mk(k,srtso4) !start with NH4 mass
+
+       Mktot = M_NH4         ! start with ammonium (win, 9/26/08)
+       Mktot = Mktot + Mk(k,srth2o) ! then include water
+
+       do j=1, ICOMPHARD-2
+          Mktot=Mktot+Mk(k,j)
+       enddo
+       mp=Mktot/Nk(k)
+       Dpk(k)=((mp/density)*(6./pi))**(0.333)
+       Kn=2.0*mfp/Dpk(k)                            !S&P Table 12.1
+       Dk(k)=kB*temptms/(3.0*pi*mu*Dpk(k)) &        !S&P Table 12.1
+         *((5.0+4.0*Kn+6.0*Kn**2+18.0*Kn**3)/(5.0-Kn+(8.0+pi)*Kn**2))
+       ck(k)=sqrt(8.0*kB*temptms/(pi*mp))           !S&P Table 12.1
+    enddo
+
+    ! Calculate coagulation coefficients
+    do i=1,nBins
+       do j=1,nBins
+          Kn=4.0*(Dk(i)+Dk(j)) &
+             /(sqrt(ck(i)**2+ck(j)**2)*(Dpk(i)+Dpk(j))) !S&P eqn 12.51
+          beta=(1.0+Kn)/(1.0+2.0*Kn*(1.0+Kn))          !S&P eqn 12.50
+          !This is S&P eqn 12.46 with non-continuum correction, beta
+          kij(i,j)=2.0*pi*(Dpk(i)+Dpk(j))*(Dk(i)+Dk(j))*beta
+          kij(i,j)=kij(i,j)*1.0e+6_fp/boxvol  !normalize by grid cell volume
+       enddo
+    enddo
+
+10  continue     !repeat process here if multiple time steps are needed
+
+    if(pdbg) print*,'In the time steps loop +++++++++++++'
+
+    ! Calculate xbar, phi and eff
+#if defined(TOMAS12) || defined(TOMAS15)
+    do k=1,nBins
+
+       xbar(k)=0.0
+       do j=1,ICOMPHARD-2
+          xbar(k)=xbar(k)+Mk(k,j)/Nk(k)            !eqn 8b
+       enddo
+       if(k.lt.nBins-1)then !from 1 to 10 bins
+
+          eff(k)=2./9.*Nk(k)/xk(k) *(4.-xbar(k)/xk(k)) !eqn 4 in tzivion 1999
+          phi(k)=2./9.*Nk(k)/xk(k) *(xbar(k)/xk(k)-1.) !eqn 4 in tzivion 1999
+
+          !Constraints in equation 15
+          if (xbar(k) .lt. xk(k)) then
+             eff(k)=2./3.*Nk(k)/xk(k)
+             phi(k)=0.0
+
+          else if (xbar(k) .gt. xk(k+1)) then
+             phi(k)=2./3.*Nk(k)/xk(k)
+             eff(k)=0.0
+          endif
+       else                      ! from 11 bins to 12 bins
+          eff(k)=2./31./31.*Nk(k)/xk(k) &
+                 *(32.-xbar(k)/xk(k)) !eqn 4 in tzivion 1999
+          phi(k)=2./31./31.*Nk(k)/xk(k) &
+                 *(xbar(k)/xk(k)-1.) !eqn 4 in tzivion 1999
+
+          !Constraints in equation 15
+          if (xbar(k) .lt. xk(k)) then
+             eff(k)=2./31.*Nk(k)/xk(k)
+             phi(k)=0.0
+
+          else if (xbar(k) .gt. xk(k+1)) then
+             phi(k)=2./31.*Nk(k)/xk(k)
+             eff(k)=0.0
+          endif
+       endif
+
+    enddo
+
+#else
+    do k=1,nBins
+
+       xbar(k)=0.0
+       do j=1,ICOMPHARD-2
+          xbar(k)=xbar(k)+Mk(k,j)/Nk(k)            !eqn 8b
+       enddo
+
+       eff(k)=2.*Nk(k)/xk(k)*(2.-xbar(k)/xk(k))    !eqn 13a
+       phi(k)=2.*Nk(k)/xk(k)*(xbar(k)/xk(k)-1.)    !eqn 13b
+
+       !Constraints in equation 15
+       if (xbar(k) .lt. xk(k)) then
+          eff(k)=2.*Nk(k)/xk(k)
+          phi(k)=0.0
+       else if (xbar(k) .gt. xk(k+1)) then
+          phi(k)=2.*Nk(k)/xk(k)
+          eff(k)=0.0
+       endif
+    enddo
+#endif
+
+    ! Necessary initializations
+    sk2mtot=0.0
+    sk2mxtot=0.0
+    do j=1,ICOMPHARD-2
+       sk2m(j)=0.0
+       sk2mx(j)=0.0
+       sk2mx2(j)=0.0
+    enddo
+
+    ! Calculate rates of change for Nk and Mk
+    do k=1,nBins
+
+       !Initialize to zero
+       do j=1,ICOMPHARD-2
+          k1m(j)=0.0
+          k1mx(j)=0.0
+          k1mx2(j)=0.0
+       enddo
+       High_in=0.0
+       k1mtot=0.0
+       k1mxtot=0.0
+
+       !Calculate sums
+#if defined(TOMAS12) || defined(TOMAS15)
+       do j=1,ICOMPHARD-2
+          if (k .gt. 1.and.k.lt.nBins) then
+             do i=1,k-1
+                k1m(j)=k1m(j)+kij(k,i)*Mk(i,j)
+                k1mx(j)=k1mx(j)+kij(k,i)*Mk(i,j)*xbar(i)*zeta
+                k1mx2(j)=k1mx2(j)+kij(k,i)*Mk(i,j)*xbar(i)**2.*zeta**3.
+             enddo
+          elseif(k.eq.nBins)then
+             k1m(j)= sk2m(j)+kij(k,k-1)*Mk(k-1,j)
+             k1mx(j)=sk2mx(j)+kij(k,k-1)*Mk(k-1,j)*xbar(k-1)*4.754
+             k1mx2(j)=sk2mx2(j)+kij(k,k-1)*Mk(k-1,j)*xbar(k-1)**2.*107.4365
+          endif
+          k1mtot=k1mtot+k1m(j)
+          k1mxtot=k1mxtot+k1mx(j)
+       enddo
+#else
+       do j=1,ICOMPHARD-2
+          if (k .gt. 1) then
+             do i=1,k-1
+                k1m(j)=k1m(j)+kij(k,i)*Mk(i,j)
+                k1mx(j)=k1mx(j)+kij(k,i)*Mk(i,j)*xbar(i)
+                k1mx2(j)=k1mx2(j)+kij(k,i)*Mk(i,j)*xbar(i)**2
+             enddo
+          endif
+          k1mtot=k1mtot+k1m(j)
+          k1mxtot=k1mxtot+k1mx(j)
+       enddo
+#endif
+
+       if (k .lt. nBins) then
+          do i=k+1,nBins
+             High_in=High_in+Nk(i)*kij(k,i)
+          enddo
+       endif
+
+       !Calculate rates of change
+#if defined(TOMAS12) || defined(TOMAS15)
+       if(k.lt.nBins-1)then
+
+          dNdt(k)= -Nk(k)*High_in-kij(k,k)*Nk(k)**2.*1.125 &
+                   -(phi(k)*k1mtot+(eff(k)-phi(k))/6./xk(k)*k1mxtot) &
+                   -kij(k,k)*(phi(k)/3.*xbar(k)*Nk(k)+(eff(k)-phi(k))/18. &
+                   /xk(k)*zeta*xbar(k)*xbar(k)*Nk(k))
+
+          if (k .gt. 1) then
+             !yhl Nk*low_in changes to -0.5*Kij*Nk**2.
+             dNdt(k)=dNdt(k)+0.625*kij(k-1,k-1)*Nk(k-1)**2 &
+                     +(phi(k-1)*sk2mtot+(eff(k-1)-phi(k-1))/6./xk(k-1) &
+                     *sk2mxtot) &
+                     +kij(k-1,k-1)*(phi(k-1)/3.*xbar(k-1)*Nk(k-1)+(eff(k-1) &
+                     -phi(k-1))/18./xk(k-1)*zeta*xbar(k-1)*xbar(k-1) &
+                     *Nk(k-1))
+
+          endif
+
+          do j=1,ICOMPHARD-2
+
+             dMdt(k,j)= Nk(k)*k1m(j)-Mk(k,j)*High_in & ! !term5,term6
+                        -(phi(k)*xk(k+1)*k1m(j)+ &
+                        (eff(k)+2.*phi(k))/6.*k1mx(j) &
+                        +(eff(k)-phi(k))/6./xk(k)*k1mx2(j)) & ! term3
+                        - kij(k,k)*Nk(k)*Mk(k,j)/3. & ! I assume 1/2Nk and 2/3Mk for half bin
+                        - kij(k,k)*(phi(k)*xk(k+1)*Mk(k,j)/3. &
+                        +(eff(k)+2.*phi(k))/6.*zeta*xbar(k)*Mk(k,j)/3. &
+                        +(eff(k)-phi(k))/6./xk(k)*zeta**3.*xbar(k)**2. &
+                        *Mk(k,j)/3.)
+
+             !yhl  Term9(-kij(k,k)*Nk(k)*Mk(k,j)) is cancled out by term6 (k)
+             if (k .gt. 1) then
+                dMdt(k,j)=dMdt(k,j) &
+                          +(phi(k-1)*xk(k)*sk2m(j)+(eff(k-1) &
+                          +2.*phi(k-1))/6.*sk2mx(j) &
+                          +(eff(k-1)-phi(k-1))/6./xk(k-1)*sk2mx2(j)) & !term1
+                          +kij(k-1,k-1)*Nk(k-1)*Mk(k-1,j)/3. &
+                          +kij(k-1,k-1)*(phi(k-1)*xk(k)*Mk(k-1,j)/3. &
+                          +(eff(k-1)+2.*phi(k-1))/6.*zeta &
+                          *xbar(k-1)*Mk(k-1,j)/3.+(eff(k-1)-phi(k-1))/6. &
+                          /xk(k-1)*zeta**3.*xbar(k-1)**2.*Mk(k-1,j)/3.)
+             endif
+          enddo
+       else if (k.eq.nBins-1)then
+
+          dNdt(k)=0.625*kij(k-1,k-1)*Nk(k-1)**2 &
+                  +(phi(k-1)*sk2mtot+(eff(k-1)-phi(k-1))/6./xk(k-1) &
+                  *sk2mxtot) &
+                  +kij(k-1,k-1)*xbar(k-1)*Nk(k-1)/3.*(phi(k-1) &
+                  +(eff(k-1) &
+                  -phi(k-1))/6./xk(k-1)*zeta*xbar(k-1))
+
+          !yhl updated the following
+          dNdt(k)=dNdt(k)-Nk(k)*High_in-kij(k,k)*Nk(k)**2.*1.02 &
+                  -(phi(k)*k1mtot+(eff(k)-phi(k))/62./xk(k)*k1mxtot) &
+                  -kij(k,k)*xbar(k)*Nk(k)*0.484*(phi(k)+(eff(k) &
+                  -phi(k))/62./xk(k)*4.754*xbar(k))
+
+          !yhl I am not sure how it bring 0.5*kij(k-1,k-1)*Nk(k-1)**2 here. But
+          !yhl It results in much closer result as 30 bins. Apr.27.08
+
+          do j=1,ICOMPHARD-2
+             dMdt(k,j)= &
+                        +(phi(k-1)*xk(k)*sk2m(j)+(eff(k-1) &
+                        +2.*phi(k-1))/6.*sk2mx(j) &
+                        +(eff(k-1)-phi(k-1))/6./xk(k-1)*sk2mx2(j)) & !term1
+                        +kij(k-1,k-1)*Nk(k-1)*Mk(k-1,j)/3. &
+                        +kij(k-1,k-1)*(phi(k-1)*xk(k)*Mk(k-1,j)/3. &
+                        +(eff(k-1)+2.*phi(k-1))/6.*zeta &
+                        *xbar(k-1)*Mk(k-1,j)/3.+(eff(k-1)-phi(k-1))/6. &
+                        /xk(k-1)*zeta**3.*xbar(k-1)**2.*Mk(k-1,j)/3.)
+
+             !yhl updated the following
+             dMdt(k,j)= dMdt(k,j)+Nk(k)*k1m(j)-Mk(k,j)*High_in & ! !term5,term6
+                        -(phi(k)*xk(k+1)*k1m(j)+(eff(k)/62.+0.484*phi(k)) &
+                        *k1mx(j)+(eff(k)-phi(k))/62./xk(k)*k1mx2(j)) & ! term3
+                        -kij(k,k)*Nk(k)*Mk(k,j)*0.103226 & ! I assume 1/2Nk and 2/3Mk for half bin
+                        -kij(k,k)*Mk(k,j)*0.484*(phi(k)*xk(k+1)+(eff(k)/62. &
+                        +0.484*phi(k))*4.754*xbar(k) &
+                        +(eff(k)-phi(k))/62./xk(k)*107.4365*xbar(k)**2.)
+          enddo
+
+       else if (k.eq.nBins)then
+          dNdt(k)=-Nk(k)*High_in-kij(k,k)*Nk(k)**2.*1.103226 &
+                  -(phi(k)*k1mtot+(eff(k)-phi(k))/62./xk(k)*k1mxtot) &
+                  -kij(k,k)*0.484*xbar(k)*Nk(k)*(phi(k)+(eff(k)-phi(k)) &
+                  /62./xk(k)*4.754*xbar(k)) &
+                  +0.52*kij(k-1,k-1)*Nk(k-1)**2 &
+                  +(phi(k-1)*sk2mtot+(eff(k-1)-phi(k-1))/62./xk(k-1) &
+                  *sk2mxtot) &
+                  +kij(k-1,k-1)*xbar(k-1)*Nk(k-1)*0.484*(phi(k-1) &
+                  +(eff(k-1) &
+                  -phi(k-1))/62./xk(k-1)*4.754*xbar(k-1))
+
+          do j=1,ICOMPHARD-2
+             dMdt(k,j)= Nk(k)*k1m(j)-Mk(k,j)*High_in & ! !term5,term6
+                        -(phi(k)*xk(k+1)*k1m(j)+(eff(k)/62.+0.484 &
+                        *phi(k))*k1mx(j) &
+                        +(eff(k)-phi(k))/62./xk(k)*k1mx2(j)) & ! term3
+                        -kij(k,k)*Nk(k)*Mk(k,j)*0.103226 & ! I assume 1/2Nk and 2/3Mk for half bin
+                        -kij(k,k)*Mk(k,j)*0.484*(phi(k)*xk(k+1)+(eff(k)/62. &
+                        +0.484*phi(k))*4.754*xbar(k) &
+                        +(eff(k)-phi(k))/62./xk(k)*107.4365*xbar(k)**2.) &
+                        +(phi(k-1)*xk(k)*sk2m(j)+(eff(k-1)/62.+0.484 &
+                        *phi(k-1)) &
+                        *sk2mx(j)+(eff(k-1)-phi(k-1))/62./xk(k-1)*sk2mx2(j)) & !term1
+                        +kij(k-1,k-1)*Nk(k-1)*Mk(k-1,j)*0.103226 &
+                        +kij(k-1,k-1)*Mk(k-1,j)*0.484*(phi(k-1)*xk(k) &
+                        +(eff(k-1)/62.+0.484*phi(k-1))*4.754*xbar(k-1) &
+                        +(eff(k-1)-phi(k-1))/62./xk(k-1)*107.4365 &
+                        *xbar(k-1)**2.)
+          enddo
+       endif
+
+#else
+       dNdt(k)= &
+                -kij(k,k)*Nk(k)**2 &
+                -phi(k)*k1mtot &
+                -zeta*(eff(k)-phi(k))/(2*xk(k))*k1mxtot &
+                -Nk(k)*High_in
+       if (k .gt. 1) then
+          dNdt(k)=dNdt(k)+ &
+                  0.5*kij(k-1,k-1)*Nk(k-1)**2 &
+                  +phi(k-1)*sk2mtot &
+                  +zeta*(eff(k-1)-phi(k-1))/(2*xk(k-1))*sk2mxtot
+       endif
+
+       do j=1,ICOMPHARD-2
+          dMdt(k,j)= &
+                     +Nk(k)*k1m(j) &
+                     -kij(k,k)*Nk(k)*Mk(k,j) &
+                     -Mk(k,j)*High_in &
+                     -phi(k)*xk(k+1)*k1m(j) &
+                     -0.5*zeta*eff(k)*k1mx(j) &
+                     +zeta**3*(phi(k)-eff(k))/(2*xk(k))*k1mx2(j)
+          if (k .gt. 1) then
+             dMdt(k,j)=dMdt(k,j)+ &
+                       kij(k-1,k-1)*Nk(k-1)*Mk(k-1,j) &
+                       +phi(k-1)*xk(k)*sk2m(j) &
+                       +0.5*zeta*eff(k-1)*sk2mx(j) &
+                       -zeta**3*(phi(k-1)-eff(k-1))/(2*xk(k-1))*sk2mx2(j)
+          endif
+          !dbg if (j. eq. srtso4) then
+          !dbg    if (k. gt. 1) then
+          !dbg       write(*,1) Nk(k)*k1m(j), kij(k,k)*Nk(k)*Mk(k,j), &
+          !dbg          Mk(k,j)*in, phi(k)*xk(k+1)*k1m(j), &
+          !dbg          0.5*zeta*eff(k)*k1mx(j), &
+          !dbg          zeta**3*(phi(k)-eff(k))/(2*xk(k))*k1mx2(j), &
+          !dbg          kij(k-1,k-1)*Nk(k-1)*Mk(k-1,j), &
+          !dbg          phi(k-1)*xk(k)*sk2m(j), &
+          !dbg          0.5*zeta*eff(k-1)*sk2mx(j), &
+          !dbg          zeta**3*(phi(k-1)-eff(k-1))/(2*xk(k-1))*sk2mx2(j)
+          !dbg    else
+          !dbg       write(*,1) Nk(k)*k1m(j), kij(k,k)*Nk(k)*Mk(k,j), &
+          !dbg          Mk(k,j)*in, phi(k)*xk(k+1)*k1m(j), &
+          !dbg          0.5*zeta*eff(k)*k1mx(j), &
+          !dbg          zeta**3*(phi(k)-eff(k))/(2*xk(k))*k1mx2(j)
+          !dbg    endif
+          !dbg endif
+       enddo
+#endif
+
+       !dbg
+       if(pdbg) write(*,*) 'k,dNdt,dMdt: ', k, dNdt(k), dMdt(k,srtso4)
+
+       !Save the summations that are needed for the next size bin
+       sk2mtot=k1mtot
+       sk2mxtot=k1mxtot
+       do j=1,ICOMPHARD-2
+          sk2m(j)=k1m(j)
+          sk2mx(j)=k1mx(j)
+          sk2mx2(j)=k1mx2(j)
+       enddo
+
+    enddo  !end of main k loop
+
+    ! Update Nk and Mk according to rates of change and time step
+
+    !If any Mkj are zero, add a small amount to achieve finite
+    !time steps
+    do k=1,nBins
+       do j=1,ICOMPHARD-2
+          if (Mk(k,j) .eq. 0.e+0_fp) then
+             !add a small amount of mass
+             mtotal=0.e+0_fp
+             do jj=1,ICOMPHARD-2
+                mtotal=mtotal+Mk(k,jj)
+             enddo
+             Mk(k,j)=1.e-10_fp*mtotal
+          endif
+       enddo
+    enddo
+
+    call mnfix(NK, MK, PDBG)
+
+    !Choose time step
+    dts=dt-tsum      !try to take entire remaining time step
+    limit='comp'
+    do k=1,nBins
+       if(pdbg) print*,'At bin ',k
+       if (Nk(k) .gt. Neps) then
+          !limit rates of change for this bin
+          if (dNdt(k) .lt. 0.0) tlimit=dtlimit
+          if (dNdt(k) .gt. 0.0) tlimit=itlimit
+          if (abs(dNdt(k)*dts) .gt. Nk(k)*tlimit) then
+             dts=Nk(k)*tlimit/abs(dNdt(k))
+             if(pdbg) print*,'tlimit',tlimit,'Nk(',k,')',Nk(k), &
+                             'dNdt',dNdt(k), ' == dts ',dts
+             limit='number'
+             if(pdbg) write(limit(8:9),'(I2)') k
+             if(pdbg) write(*,*) Nk(k), dNdt(k)
+          endif
+          do j=1,ICOMPHARD-2
+             !limit rates of change x(win, 4/22/06)
+             if (dMdt(k,j) .lt. 0.0) tlimit=dtlimit
+             if (dMdt(k,j) .gt. 0.0) tlimit=itlimit
+             if (abs(dMdt(k,j)*dts) .gt. Mk(k,j)*tlimit) then
+                mtotal=0.e+0_fp
+                do jj=1,ICOMPHARD-2
+                   mtotal=mtotal+Mk(k,jj)
+                enddo
+                !only use this criteria if this species is significant
+                if ((Mk(k,j)/mtotal) .gt. 1.e-5_fp) then
+                   dts=Mk(k,j)*tlimit/abs(dMdt(k,j))
+                   if(pdbg) print*,'tlimit',tlimit,'Mk(',k,j,')',Mk(k,j), &
+                                   'dMdt',dMdt(k,j), ' == dts ',dts
+                else
+                   if (dMdt(k,j) .lt. 0.0) then
+                      !set dmdt to 0 to avoid very small mk going negative
+                      dMdt(k,j)=0.0
+                      if(pdbg) print*,' dMdt(k,j) < 0 '
+                   endif
+                endif
+                limit='mass'
+                if(pdbg) write(limit(6:7),'(I2)') k
+                if(pdbg) write(limit(9:9),'(I1)') j
+                if(pdbg) write(*,*) Mk(k,j), dMdt(k,j)
+             endif
+          enddo
+       else
+          !nothing in this bin - don't let it affect time step
+          Nk(k)=Neps
+#if defined(TOMAS12) || defined(TOMAS15)
+          Mk(k,srtso4)=Neps*sqrt(xk(k)*xk(k+1)) !make the added particles SO4
+#else
+          Mk(k,srtso4)=Neps*1.4e+0_fp*xk(k) !make the added particles SO4
+#endif
+          !make sure mass/number don't go negative
+          if (dNdt(k) .lt. 0.0) dNdt(k)=0.0
+          if (pdbg) print*,' dNdt(k) < 0 '
+          do j=1,ICOMPHARD-2
+             if (dMdt(k,j) .lt. 0.0) dMdt(k,j)=0.0
+          enddo
+       endif
+    enddo  !loop bin
+
+    if (pdbg .and. dts .lt. 1. ) then
+       write(*,*), dts, 'dts < 1. in multicoag'
+    endif
+
+    if (dts .eq. 0.) then
+       write(*,*) 'time step is 0 in multicoag - inf/nan/tiny error'
+       !pause
+       do k = 1,nBins
+          print *, 'dNdt(k)', dNdt(k)
+          print *, 'dMdt(k,j)'
+          do j = 1,ICOMPHARD-2
+             print *, dMdt(k,j)
+          end do
+       end do
+
+       !call debugprint(nk, mk, 0,0,0,'MULTICOAG before terminate: dts=0')
+       PDBG = .true.
+       return
+       !stop
+       !go to 20
+    endif
+
+    !Change Nk and Mk
+    !dbg
+    if(pdbg) write(*,*) 'tsum=',tsum+dts,' ',limit
+    do k=1,nBins
+       Nk(k)=Nk(k)+dNdt(k)*dts
+       do j=1,ICOMPHARD-2
+          Mk(k,j)=Mk(k,j)+dMdt(k,j)*dts
+       enddo
+    enddo
+
+    !Update time and repeat process if necessary
+    tsum=tsum+dts
+    if (tsum .lt. dt) then
+       !print*,'tsum',tsum, 'less than 3600. loop again'
+       goto 10
+    endif
+
+    RETURN
+
+  END SUBROUTINE MULTICOAG
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: getcondsink
+!
+! !DESCRIPTION: This subroutine calculates the condensation sink (first order
+!  loss rate of condensing gases) from the aerosol size distribution.
+!  WRITTEN BY Jeff Pierce, May 2007 for GISS GCM-II
+!  Put in GEOS-Chem by Win T. (9/30/08)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE getCondSink(Nko, Mko, spec, CS, sinkfrac, surf_area, &
+            BOXVOL, TEMPTMS, PRES)
+!
+! !INPUT PARAMETERS:
+!
+    !Initial values of
+    !=================
+    !Nk(nBins) - number of particles per size bin in grid cell
+    !Nnuc - number of particles per size bin in grid cell
+    !Mnuc - mass of given species in nucleation pseudo-bin (kg/grid cell)
+    !Mk(nBins, ICOMPHARD) - mass of a given species per size bin/grid cell
+    !spec - number of the species we are finding the condensation sink for
+    double precision Nko(nBins), Mko(nBins, ICOMPHARD)
+    REAL(fp), INTENT(IN)       :: BOXVOL, TEMPTMS, PRES
+    integer spec
+!
+! !OUTPUT PARAMETERS:
+!
+    !CS - condensation sink [s^-1]
+    !sinkfrac(nBins) - fraction of condensation sink from a bin
+    double precision CS, sinkfrac(nBins)
+    REAL(fp), INTENT(OUT)    :: surf_area
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    integer i,j,k,c           ! counters
+    double precision pi, R    ! pi and gas constant (J/mol K)
+    double precision mu                  !viscosity of air (kg/m s)
+    double precision mfp                 !mean free path of air molecule (m)
+    double precision l_ab                !mean free path of h2so4 molecule (m)
+    real Di       !diffusivity of gas in air (m2/s)
+    double precision Neps     !tolerance for number
+    real density  !density [kg m^-3]
+    double precision mp       !mass per particle [kg]
+    double precision Dpk(nBins) !diameter of particle [m]
+    double precision Kn       !Knudson number
+    double precision beta(nBins) !non-continuum correction factor
+    double precision Mktot    !total mass in bin [kg]
+    double precision c_a      !average speed of a, h2so4 molecule
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654, R=8.314) !pi and gas constant (J/mol K)
+    parameter(Neps=1.0e+10_fp)
+    double precision alpha(ICOMPHARD) ! accomodation coef
+    !data alpha/0.65,0.,0.,0.,0.,0.,0.,0.,0./
+    real(fp) Sv(ICOMPHARD)         !parameter used for estimating diffusivity
+    !data Sv /42.88,42.88,42.88,42.88,42.88,42.88,42.88, &
+    !         42.88,42.88/
+
+    !=================================================================
+    ! getCondSink begins here
+    !=================================================================
+
+    ! have to find a better way to simply assign contants to these array
+    ! The problem is I declare the array with ICOMP - its value will be
+    ! determined at time of run, so I can't use DATA statement
+    DO J=1,ICOMPHARD
+       !IF ( J == SRTSO4 ) THEN
+       alpha(J) = 0.65
+       !ELSE
+       !   alpha(J) = 0.
+       !ENDIF
+       Sv(J) = 42.88
+    ENDDO
+
+
+    ! get some parameters
+
+    !mu=2.5277e-7 * TEMPTMS**0.75302
+    !mfp=2.0*mu / ( pres*sqrt( 8.0 * 0.6589 / (pi*R*TEMPTMS) ) )  !S&P eqn 8.6
+
+    !mfp=2.0*mu / ( pres*sqrt( 8.0 * 0.0289 / (pi*R*TEMPTMS) ) )  !S&P eqn 8.6
+
+    Di=gasdiff(TEMPTMS,pres,98.0_fp,Sv(spec))
+
+    c_a  = sqrt(8.0 * TEMPTMS * R / 0.098)
+    l_ab = 2.0 * Di / c_a
+
+    ! get size dependent values
+    do k=1,nBins
+       if (Nko(k) .gt. Neps) then
+          Mktot=0.e+0_fp
+          do j=1,ICOMPHARD
+             Mktot=Mktot+Mko(k,j)
+          enddo
+          !kpc  Density should be changed due to more species involed.
+          !density=aerodens(Mko(k,srtso4),0.e+0_fp, &
+          !        Mko(k,srtnh4),Mko(k,srtnacl),Mko(k,srtecil), &
+          !        Mko(k,srtecob),Mko(k,srtocil),Mko(k,srtocob), &
+          !        Mko(k,srtdust),Mko(k,srth2o)) !assume bisulfate
+          density=aerodens(Mko(k,srtso4),0.e+0_fp, &
+                  Mko(k,srtnh4),0.e+0_fp,0.e+0_fp,&
+                  0.e+0_fp,0.e+0_fp,0.e+0_fp, &
+                  0.e+0_fp,Mko(k,srth2o)) !assume bisulfate
+          mp=Mktot/Nko(k)
+       else
+          !nothing in this bin - set to "typical value"
+          density=1500.
+#if defined(TOMAS12) || defined(TOMAS15)
+          mp=sqrt(xk(k)*xk(k+1))
+#else
+          mp=1.4*xk(k)
+#endif
+       endif
+       Dpk(k)  = ( (mp/density)*(6./pi) )**(0.333)
+       !Kn     = 2.0 * mfp  / Dpk(k)     !S&P eqn 11.35 (text)
+       Kn      = 2.0 * l_ab / Dpk(k)     !S&Pv2 chapter 12 - Kn for Dahneke correction factor
+       beta(k) = ( 1.+Kn )  / ( 1.+2.*Kn*(1.+Kn)/alpha(spec) )   !S&P eqn 11.35
+    enddo
+    
+    ! get condensation sink
+    CS = 0.e+0_fp
+    surf_area = 0.e+0_fp
+    do k=1,nBins
+       CS = CS + Dpk(k)*Nko(k)*beta(k)
+       surf_area = surf_area+Nko(k)*pi*(Dpk(k)*1.0e+6_fp)**2
+    enddo
+    !bc 21/01/2022 - check if divide by zero below -added 2 if 
+    do k=1,nBins
+       sinkfrac(k) = 0.e-0_fp
+       if (CS > 0.e-0_fp) then
+          sinkfrac(k) = Dpk(k)*Nko(k)*beta(k)/CS
+       endif
+    enddo
+    CS = 2.e+0_fp*pi*dble(Di)*CS/(dble(boxvol)*1.e-6_fp)
+    surf_area = 0.e-0_fp
+    if (CS  > 0.e-0_fp) then
+       surf_area = surf_area/(dble(boxvol))
+    endif
+    
+    return
+
+  end subroutine getcondsink
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: getH2SO2conc
+!
+! !DESCRIPTION: This subroutine uses newtons method to solve for the steady
+!  state H2SO4 concentration when nucleation is occuring.
+!  It solves for H2SO4 in 0 = P - CS*H2SO4 - M(H2SO4)
+!  where P is the production rate of H2SO4, CS is the condensation sink
+!  and M(H2SO4) is the loss of mass towards making new particles.
+!  WRITTEN BY Jeff Pierce, May 2007 for GISS GCM-II
+!  Put in GEOS-CHEM by Win T. (9/30/08)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE getH2SO4conc(Nk, Mk, H2SO4rate, CS, NH3conc, gasConc, &
+                          ionrate, surf_area, BOXVOL, BOXMASS, &
+                          TEMPTMS, PRES, RHTOMAS, lev)
+!
+! !USES:
+!
+    USE ERROR_MOD,      ONLY : ERROR_STOP, IT_IS_NAN
+!
+! !INPUT PARAMETERS:
+!
+    !Initial values of
+    !=================
+    ! H2SO4rate - H2SO4 generation rate [kg box-1 s-1]
+    ! CS - condensation sink [s-1]
+    ! NH3conc - ammonium in box [kg box-1]
+    REAL(fp)            :: Nk(nBins)
+    REAL(fp)            :: Mk(nBins, ICOMPHARD)
+    double precision       H2SO4rate
+    double precision       CS
+    double precision       NH3conc
+    REAL(fp), INTENT(IN)  :: BOXVOL,  BOXMASS, TEMPTMS
+    REAL(fp), INTENT(IN)  :: PRES,    RHTOMAS
+    integer                lev
+!
+! !OUTPUT PARAMETERS:
+!
+    ! gasConc - gas H2SO4 [kg/box]
+    double precision       gasConc
+    REAL(fp)            :: ionrate
+    REAL(fp)            :: surf_area
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    integer i,j,k,c           ! counters
+    double precision fn, rnuc ! nucleation rate [# cm-3 s-1] and critical radius [nm]
+    double precision mnuc, mnuc1 ! mass of nucleated particle [kg]
+    double precision fn1, rnuc1 ! nucleation rate [# cm-3 s-1] and critical radius [nm]
+    double precision res      ! d[H2SO4]/dt, need to find the solution where res = 0
+    double precision massnuc     ! mass being removed by nucleation [kg s-1 box-1]
+    double precision gasConc1 ! perturbed gasConc
+    double precision gasConc_hi, gasConc_lo
+    double precision res1     ! perturbed res
+    double precision res_new  ! new guess for res
+    double precision dresdgasConc ! derivative for newtons method
+    double precision Gci(ICOMPHARD)      !array to carry gas concentrations
+    logical nflg              !says if nucleation occured
+    double precision H2SO4min !minimum H2SO4 concentration in parameterizations (molec/cm3)
+    double precision pi
+    integer iter,iter1
+    double precision CSeps    ! low limit for CS
+    double precision max_H2SO4conc !maximum H2SO4 concentration in parameterizations (kg/box)
+    double precision nh3ppt   !ammonia concentration in ppt
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654)
+    !parameter(H2SO4min=1.D4) !molecules cm-3
+    parameter(CSeps=1.0e-20_fp)
+
+    !=================================================================
+    ! getH2SO4conc begins here
+    !=================================================================
+
+    do i=1,ICOMPHARD
+       Gci(i)=0.e+0_fp
+    enddo
+    Gci(srtnh4)=NH3conc
+
+    ! make sure CS doesn't equal zero
+    !CS = max(CS,CSeps)
+
+    ! some specific stuff for napari vs. vehk
+    if (ion_nuc.eq.1) then
+       H2SO4min=1.0e+5_fp
+    elseif (ion_nuc.eq.2) then
+       H2SO4min=5.0e+5_fp
+    else
+       H2SO4min=1.0e+4_fp
+    endif
+
+    if ((bin_nuc.eq.1).or.(tern_nuc.eq.1).or.(ion_nuc.le.2))then
+       nh3ppt = Gci(srtnh4)/17.e+0_fp/(boxmass/29.e+0_fp)*1e+12_fp* &
+  &             PRES/101325.*273./TEMPTMS ! corrected for pressure (because this should be concentration)
+       if (ion_nuc.eq.1)then
+          max_H2SO4conc=1.0e+8_fp*boxvol/1000.e+0_fp*98.e+0_fp/6.022e+23_fp
+       elseif (ion_nuc.eq.2)then
+          max_H2SO4conc=5.0e+8_fp*boxvol/1000.e+0_fp*98.e+0_fp/6.022e+23_fp
+       elseif ((nh3ppt.gt.1.0e+0_fp).and.(tern_nuc.eq.1))then
+          max_H2SO4conc=1.0e+9_fp*boxvol/1000.e+0_fp*98.e+0_fp/6.022e+23_fp
+       elseif (bin_nuc.eq.1)then
+          max_H2SO4conc=1.0e+11_fp*boxvol/1000.e+0_fp*98.e+0_fp/6.022e+23_fp
+       else
+          max_H2SO4conc = 1.0e+100_fp
+       endif
+    else
+       max_H2SO4conc = 1.0e+100_fp
+    endif
+
+    ! Checks for when condensation sink is very small
+    if (CS.gt.CSeps) then
+       gasConc = H2SO4rate/CS
+    else
+       if((bin_nuc.gt.0).or.(tern_nuc.gt.0).or. (ion_nuc.gt.0))then
+          gasConc = max_H2SO4conc
+       else
+          print*,'condesation sink too small in getH2SO4conc'
+          STOP
+       endif
+    endif
+
+    gasConc = min(gasConc,max_H2SO4conc)
+    Gci(srtso4) = gasConc
+    call getNucRate(Nk, Mk, Gci,fn,mnuc,nflg,ionrate, surf_area, &
+                    BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+
+    if (fn.gt.0.e+0_fp) then      ! nucleation occured
+       !convert to kg/box
+       gasConc_lo = H2SO4min*boxvol/(1000.e+0_fp/98.e+0_fp*6.022e+23_fp)
+
+       ! Test to see if gasConc_lo gives a res < 0
+       ! (this means ANY nucleation is too high)
+       Gci(srtso4) = gasConc_lo*1.000001e+0_fp
+       call getNucRate(Nk,Mk,Gci,fn1,mnuc1,nflg,ionrate,surf_area, &
+                       BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+       if (fn1.gt.0.e+0_fp) then
+          massnuc = mnuc1*fn1*boxvol*98.e+0_fp/96.e+0_fp
+          !massnuc = 4.e+0_fp/3.e+0_fp*pi*(rnuc1*1.e-9_fp)**3*1350.*fn1*boxvol*
+          !massnuc = 4.e+0_fp/3.e+0_fp*pi*(rnuc1*1.e-9_fp)**3*1800.*fn1*boxvol*%
+          !          98.e+0_fp/96.e+0_fp
+          !jrp print*,'res',res
+          !jrp print*,'H2SO4rate',H2SO4rate
+          !jrp print*,'CS*gasConc_lo',CS*gasConc_lo
+          !jrp print*,'mnuc',mnuc
+          res = H2SO4rate - CS*gasConc_lo - massnuc
+          if (res.lt.0.e+0_fp) then ! any nucleation too high
+             ! if (.not. spinup(14.0)) print*,'nucleation cuttoff'
+             ! have nucleation occur and fix mass balance after
+             gasConc = gasConc_lo*1.000001
+             return
+          endif
+       endif
+
+       ! we know this must be the upper limit (since no nucleation)
+       gasConc_hi = gasConc
+       !take density of nucleated particle to be 1350 kg/m3
+       massnuc = mnuc*fn*boxvol*98.e+0_fp/96.e+0_fp
+       !print*,'H2SO4rate',H2SO4rate,'CS*gasConc',CS*gasConc,'mnuc',mnuc
+       res = H2SO4rate - CS*gasConc - massnuc
+
+       ! check to make sure that we can get solution
+       if (res.gt.H2SO4rate*1.e-10_fp) then
+          print*,'gas production rate too high in getH2SO4conc'
+          print*,H2SO4rate,CS,gasConc,massnuc,res
+          return
+          !STOP
+       endif
+
+       iter = 0
+       !jrp print*, 'iter',iter
+       !jrp print*,'gasConc_lo',gasConc_lo,'gasConc_hi',gasConc_hi
+       !jrp print*,'res',res
+       do while ((abs(res/H2SO4rate).gt.1.e-4_fp).and.(iter.lt.40))
+          iter = iter+1
+          if (res .lt. 0.e+0_fp) then ! H2SO4 concentration too high, must reduce
+             gasConc_hi = gasConc ! old guess is new upper bound
+          elseif (res .gt. 0.e+0_fp) then ! H2SO4 concentration too low, must increase
+             gasConc_lo = gasConc ! old guess is new lower bound
+          endif
+          !print*, 'iter',iter
+          !print*,'gasConc_lo',gasConc_lo,'gasConc_hi',gasConc_hi
+          gasConc = sqrt(gasConc_hi*gasConc_lo) ! take new guess as logmean
+          Gci(srtso4) = gasConc
+          call getNucRate(Nk, Mk,Gci,fn,mnuc,nflg,ionrate,surf_area, &
+                          BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+          massnuc = mnuc*fn*boxvol*98.e+0_fp/96.e+0_fp
+          res = H2SO4rate - CS*gasConc - massnuc
+          !print*,'res',res
+          !print*,'H2SO4rate',H2SO4rate,'CS',CS,'gasConc',gasConc
+          if (iter.eq.40.and.CS.gt.1.0e-4_fp)then
+             print*,'getH2SO4conc iter break'
+             print*,'H2SO4rate',H2SO4rate,'CS',CS
+             print*,'gasConc',gasConc,'massnuc',massnuc
+             print*,'max_H2SO4conc',max_H2SO4conc
+             print*,'fn',fn
+             print*,'res/H2SO4rate',res/H2SO4rate
+          endif
+       enddo
+
+       !print*,'IN getH2SO4conc'
+       !print*,'fn',fn
+       !print*,'H2SO4rate',H2SO4rate
+       !print*,'massnuc',massnuc,'CS*gasConc',CS*gasConc
+
+    else
+       ! nucleation didn't occur
+    endif
+
+    return
+
+  end SUBROUTINE GETH2SO4CONC
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: getnucrate
+!
+! !DESCRIPTION: This subroutine calls the Vehkamaki 2002 and Napari 2002
+!  nucleation parameterizations and gets the binary and ternary nucleation
+!  rates.
+!  WRITTEN BY Jeff Pierce, April 2007 for GISS GCM-II
+!  Put in GEOS-Chem by win T. 9/30/08
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE getNucRate(Nk, Mk, Gci,fn,mnuc,nflg, ionrate,surf_area, &
+                        BOXVOL, BOXMASS, TEMPTMS, PRES, RHTOMAS, lev)
+!
+! !USES:
+!
+    USE ERROR_MOD,      ONLY : ERROR_STOP, IT_IS_NAN
+!
+! !INPUT PARAMETERS:
+!
+    !Initial values of
+    !=================
+    ! Gci(icomp-1) - amount (kg/grid cell) of all species present in the
+    !                gas phase except water
+    REAL(fp),   INTENT(IN)       :: BOXVOL,  BOXMASS, TEMPTMS
+    REAL(fp),   INTENT(IN)       :: PRES,    RHTOMAS
+    REAL(fp), INTENT(IN)       :: Gci(ICOMPHARD)
+!
+! !INPUT/OUTPUT PARAMETERS:
+!
+    REAL(fp), INTENT(INOUT)    :: Nk(nBins)
+    REAL(fp), INTENT(INOUT)    :: Mk(nBins, ICOMPHARD)
+!
+! !OUTPUT PARAMETERS:
+!
+    ! fn - nucleation rate [# cm-3 s-1]
+    ! rnuc - radius of nuclei [nm]
+    ! nflg - says if nucleation happend
+    REAL(fp)                   :: surf_area
+    REAL(fp)                   :: ionrate
+
+    integer j,i,k
+    double precision fn       ! nucleation rate to first bin cm-3 s-1
+    double precision mnuc     !mass of nucleating particle [kg]
+    logical nflg
+    integer lev
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    double precision nh3ppt   ! gas phase ammonia in pptv
+    double precision h2so4    ! gas phase h2so4 in molec cc-1
+    double precision gtime    ! time to grow to first size bin [s]
+    double precision ltc, ltc1, ltc2 ! coagulation loss rates [s-1]
+    double precision Mktot    ! total mass in bin
+    double precision neps
+    double precision meps
+    double precision density  ! density of particle [kg/m3]
+    double precision pi
+    double precision frac     ! fraction of particles growing into first size bin
+    double precision d1,d2    ! diameters of particles [m]
+    double precision mp       ! mass of particle [kg]
+    double precision mold     ! saved mass in first bin
+    double precision rnuc     ! critical nucleation radius [nm]
+    double precision sinkfrac(nBins) ! fraction of loss to different size bins
+    double precision nadd     ! number to add
+    double precision CS       ! kerminan condensation sink [m-2]
+    double precision Dpmean   ! the number wet mean diameter of the existing aerosol
+    double precision Dp1      ! the wet diameter of bin 1
+    double precision dens1    ! density in bin 1 [kg m-3]
+    double precision GR       ! growth rate [nm hr-1]
+    double precision gamma,eta ! used in kerminen 2004 parameterzation
+    double precision drymass,wetmass,WR
+    double precision fn_c     ! barrierless nucleation rate
+    double precision h1,h2,h3,h4,h5,h6
+    double precision dum1,dum2,dum3,dum4   ! dummy variables
+    double precision rhin,tempin ! rel hum in
+
+    real(fp)    mydummy
+!
+! !DEFINED PARAMETERS:
+!
+    parameter (neps=1E8, meps=1E-8)
+    parameter (pi=3.14159)
+
+    !=================================================================
+    ! getNucRate begins here
+    !=================================================================
+
+    h2so4 = Gci(srtso4)/boxvol*1000.e+0_fp/98.e+0_fp*6.022e+23_fp
+    nh3ppt = Gci(srtnh4)/17.e+0_fp/(boxmass/29.e+0_fp)*1e+12_fp* &
+             PRES/101325.*273./TEMPTMS ! corrected for pressure (because this should be concentration)
+
+    fn = 0.e+0_fp
+    rnuc = 0.e+0_fp
+
+    !print*,'h2so4',h2so4,'nh3ppt',nh3ppt
+
+    ! if requirements for nucleation are met, call nucleation subroutines
+    ! and get the nucleation rate and critical cluster size
+    if (h2so4.gt.1.e+4_fp) then
+       if ((nh3ppt.gt.0.1).and.(tern_nuc.eq.1)) then
+          ! print*, 'napari'
+          call napa_nucl(TEMPTMS,RHTOMAS,h2so4,nh3ppt,fn,rnuc) !ternary nuc
+          if (ion_nuc.eq.1.and.ionrate.ge.1.e+0_fp) then
+             !call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+             !              h1,h2,h3,h4,h5,h6)
+          else
+             h1=0.e+0_fp
+          endif
+          if (h1.gt.fn)then
+             fn=h1
+             rnuc=h5
+          endif
+          nflg=.true.
+       elseif (bin_nuc.eq.1) then
+          ! print*, 'vehk'
+          call vehk_nucl(TEMPTMS,RHTOMAS,h2so4,fn,rnuc) !binary nuc
+          if ((ion_nuc.eq.1).and.(ionrate.ge.1.e+0_fp)) then
+             !call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+             !              h1,h2,h3,h4,h5,h6)
+          else
+             h1=0.e+0_fp
+          endif
+          if (h1.gt.fn)then
+             fn=h1
+             rnuc=h5
+          endif
+          if (fn.gt.1.0e-6_fp)then
+             nflg=.true.
+          else
+             fn = 0.e+0_fp
+             nflg=.false.
+          endif
+       elseif ((ion_nuc.eq.1).and.(ionrate.ge.1.e+0_fp)) then
+          !call ion_nucl(h2so4,surf_area,TEMPTMS,ionrate,RHTOMAS, &
+          !              h1,h2,h3,h4,h5,h6)
+          fn=h1
+          rnuc=h5
+          nflg=.true.
+       elseif(ion_nuc.eq.2) then
+          ! Yu Ion nucleation
+          !! first we need to calculate the available surface area
+          !surf_area = 0.e+0_fp
+          !do k=1, ibins
+          !   if (Nki(k) .gt. Neps) then
+          !      Mktot=0.e+0_fp
+          !      do j=1,icomp
+          !         Mktot=Mktot+Mki(k,j)
+          !      enddo
+          !      mp=Mktot/Nki(k)
+          !      density=aerodens(Mki(k,srtso4),0.e+0_fp, &
+          !                       Mki(k,srtnh4),0.e+0_fp,Mki(k,srth2o))  ! assume bisulfate
+          !      ! diameter = ((mass/density)*(6/pi))**(1/3)
+          !      d2 = 1.D6*((mp/density)*(6.D0/pi))**(1.D0/3.D0) ! (micrometers)
+          !      ! surface area per particle = pi*diameter**2
+          !      surf_area = surf_area + 1.D-6*(Nki(k)/boxvol)* &
+          !                  pi*(d2**2.D0) ! (um2 cm-2)
+          !   endif
+          !enddo
+          rhin=dble(RHTOMAS*100.e+0_fp)
+          tempin=dble(TEMPTMS)
+          !call YUJIMN(h2so4, rhin, tempin, ionrate, surf_area, &
+          !            fn, dum1, rnuc, dum2)
+          fn=0.
+          rnuc=1E-9
+          nflg=.true.
+       else
+          nflg=.false.
+       endif
+       if((act_nuc.eq.1).and.(lev.le.7))then
+          ! call bl_nucl(h2so4,fn,rnuc)
+          nflg=.true.
+       endif
+       call cf_nucl(TEMPTMS,RHTOMAS,h2so4,nh3ppt,fn_c) ! use barrierless nucleation as a max for ternary
+       fn = min(fn,fn_c)
+    else
+       nflg=.false.
+    endif
+
+    if (fn.gt.0.e+0_fp) then
+       call getCondSink_kerm(Nk,Mk,CS,Dpmean,Dp1,dens1, &
+                             BOXVOL, TEMPTMS, PRES)
+       d1 = rnuc*2.e+0_fp*1e-9_fp
+       drymass = 0.e+0_fp
+       do j=1,ICOMPHARD-2
+          drymass = drymass + Mk(1,j)
+       enddo
+       wetmass = 0.e+0_fp
+       do j=1,ICOMPHARD
+          wetmass = wetmass + Mk(1,j)
+       enddo
+       !prior 10/15/08
+       !WR = wetmass/drymass
+
+       ! prevent division by zero (win, 10/15/08)
+       if( drymass == 0.e+0_fp ) then
+          WR = 1.e+0_fp
+       else
+          WR = wetmass/drymass
+       endif
+
+       !print*,'[getnucrate] Gci',Gci
+       !print*,'WR',WR, 'drymass',drymass, 'wetmass',wetmass
+       call getGrowthTime(d1,Dp1,Gci(srtso4)*WR,TEMPTMS, &
+                          boxvol,dens1,gtime)
+       GR = (Dp1-d1)*1e+9_fp/gtime*3600.e+0_fp ! growth rate, nm hr-1
+
+       gamma = 0.23e+0_fp*(d1*1.0e+9_fp)**(0.2e+0_fp)* &
+               (Dp1*1.0e+9_fp/3.e+0_fp)**0.075e+0_fp* &
+               (Dpmean*1.0e+9_fp/150.e+0_fp)** &
+               0.048e+0_fp*(dens1*1.0e-3_fp)** &
+               (-0.33e+0_fp)*(TEMPTMS/293.e+0_fp) ! equation 5 in kerminen
+       eta = gamma*CS/GR
+       !print*,'fn1',fn
+       if (Dp1.gt.d1)then
+          fn = fn*exp(eta/(Dp1*1.0e+9_fp)-eta/(d1*1.0e+9_fp))
+       endif
+       !print*,'fn2',fn
+       if( IT_IS_NAN( fn ) ) then
+          print*, '---------------->>> Found NAN in GETNUCRATE'
+          print*,'fn',fn
+          print*,'eta',eta, 'Dp1',Dp1,'d1',d1
+          print*,'gamma',gamma,'CS',CS,'GR',GR,'gtime',gtime
+          call ERROR_STOP('Found NaN in fn','getnucrate')
+       endif
+
+       mnuc = sqrt(xk(1)*xk(2))
+    endif
+
+    return
+
+  end SUBROUTINE GETNUCRATE
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: vehk_nucl
+!
+! !DESCRIPTION: Subroutine vehk_nucl calculates the binary nucleation rate and
+!  radius of the critical nucleation cluster using the parameterization of...
+!  .
+!    Vehkamaki, H., M. Kulmala, I. Napari, K. E. J. Lehtinen, C. Timmreck,
+!    M. Noppel, and A. Laaksonen. "An Improved Parameterization for Sulfuric
+!    Acid-Water Nucleation Rates for Tropospheric and Stratospheric Conditions."
+!    Journal of Geophysical Research-Atmospheres 107, no. D22 (2002).
+!  .
+!  WRITTEN BY Jeff Pierce, April 2007 for GISS GCM-II'
+!  Introduce to GEOS-Chem by Win Trivitayanurak Sep 29,2008
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE VEHK_NUCL (tempi,rhi,cnai,fn,rnuc)
+!
+! !INPUT PARAMETERS:
+!
+    real(fp),   intent(in)   :: tempi ! temperature of air [K]
+    real(fp),   intent(in)   :: rhi ! relative humidity of air as a fraction
+    real(fp), intent(in)   :: cnai ! concentration of gas phase sulfuric acid [molec cm-3]
+!
+! !OUTPUT PARAMETERS:
+!
+    real(fp), intent(out)  :: fn ! nucleation rate [cm-3 s-1]
+    real(fp), intent(out)  :: rnuc ! critical cluster radius [nm]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    REAL(fp)  :: fb0(10),fb1(10),fb2(10),fb3(10),fb4(10),fb(10)
+    REAL(fp)  :: gb0(10),gb1(10),gb2(10),gb3(10),gb4(10),gb(10) ! set parameters
+    REAL(fp)  :: temp    ! temperature of air [K]
+    REAL(fp)  :: rh      ! relative humidity of air as a fraction
+    REAL(fp)  :: cna     ! concentration of gas phase sulfuric acid [molec cm-3]
+    REAL(fp)  :: xstar   ! mole fraction sulfuric acid in cluster
+    REAL(fp)  :: ntot    ! total number of molecules in cluster
+    integer   :: i       ! counter
+
+    ! Nucleation Rate Coefficients
+    data fb0 /0.14309, 0.117489, -0.215554, -3.58856, 1.14598, &
+              2.15855, 1.6241, 9.71682, -1.05611, -0.148712        /
+    data fb1 /2.21956, 0.462532, -0.0810269, 0.049508, -0.600796, &
+              0.0808121, -0.0160106, -0.115048, 0.00903378, 0.00283508/
+    data fb2 /-0.0273911, -0.0118059, 0.00143581, -0.00021382, &
+               0.00864245, -0.000407382, 0.0000377124, 0.000157098, &
+              -0.0000198417, -9.24619e-6_fp /
+    data fb3 /0.0000722811, 0.0000404196, &
+             -4.7758e-6_fp, 3.10801e-7_fp, &
+             -0.0000228947, -4.01957e-7_fp, &
+              3.21794e-8_fp, 4.00914e-7_fp, &
+              2.46048e-8_fp, 5.00427e-9_fp /
+    data fb4 /5.91822, 15.7963, -2.91297, -0.0293333, -8.44985, &
+              0.721326, -0.0113255, 0.71186, -0.0579087, -0.0127081  /
+
+    ! Coefficients of total number of molecules in cluster
+    data gb0 /-0.00295413, -0.00205064, 0.00322308, 0.0474323, &
+              -0.0125211, -0.038546, -0.0183749, -0.0619974, &
+               0.0121827, 0.000320184 /
+    data gb1 /-0.0976834, -0.00758504, 0.000852637, -0.000625104, &
+               0.00580655, -0.000672316, 0.000172072, 0.000906958, &
+              -0.00010665, -0.0000174762 /
+    data gb2 /0.00102485, 0.000192654, &
+             -0.0000154757, 2.65066e-6_fp, &
+             -0.000101674, 2.60288e-6_fp, &
+             -3.71766e-7_fp, -9.11728e-7_fp, &
+             2.5346e-7_fp, 6.06504e-8_fp /
+    data gb3 /-2.18646e-6_fp, -6.7043e-7_fp, &
+               5.66661e-8_fp, -3.67471e-9_fp, &
+               2.88195e-7_fp, 1.19416e-8_fp, &
+              -5.14875e-10_fp, -5.36796e-9_fp, &
+              -3.63519e-10_fp, -1.42177e-11_fp /
+    data gb4 /-0.101717, -0.255774, 0.0338444, -0.000267251, &
+               0.0942243, -0.00851515, 0.00026866, -0.00774234, &
+               0.000610065, 0.000135751 /
+
+    !=================================================================
+    ! VEHK_NUCL begins here!
+    !=================================================================
+    temp=dble(tempi)
+    rh=dble(rhi)
+    cna=cnai
+
+    ! Respect the limits of the parameterization
+    if (cna .lt. 1.e4_fp) then ! limit sulf acid conc
+       fn = 0.
+       rnuc = 1.
+       !print*,'cna < 1D4', cna
+       goto 10
+    endif
+    if (cna .gt. 1.0e+11_fp) cna=1.0e11 ! limit sulfuric acid conc
+    if (temp .lt. 230.15) temp=230.15 ! limit temp
+    if (temp .gt. 305.15) temp=305.15 ! limit temp
+    if (rh .lt. 1e-4_fp) rh=1e-4_fp ! limit rh
+    if (rh .gt. 1.) rh=1. ! limit rh
+
+    ! Mole fraction of sulfuric acid
+    xstar=0.740997-0.00266379*temp-0.00349998*log(cna) &
+         +0.0000504022*temp*log(cna)+0.00201048*log(rh) &
+         -0.000183289*temp*log(rh)+0.00157407*(log(rh))**2. &
+         -0.0000179059*temp*(log(rh))**2. &
+         +0.000184403*(log(rh))**3. &
+         -1.50345e-6_fp*temp*(log(rh))**3.
+
+    ! Nucleation rate coefficients
+    do i=1, 10
+       fb(i) = fb0(i)+fb1(i)*temp+fb2(i)*temp**2. &
+              +fb3(i)*temp**3.+fb4(i)/xstar
+    enddo
+
+    ! Nucleation rate (1/cm3-s)
+    fn = exp(fb(1)+fb(2)*log(rh)+fb(3)*(log(rh))**2. &
+         +fb(4)*(log(rh))**3.+fb(5)*log(cna) &
+         +fb(6)*log(rh)*log(cna)+fb(7)*(log(rh))**2.*log(cna) &
+         +fb(8)*(log(cna))**2.+fb(9)*log(rh)*(log(cna))**2. &
+         +fb(10)*(log(cna))**3.)
+
+    !print*,'in vehk_nuc, fn',fn
+    !print*,'cna',cna,'rh',rh,'temp',temp
+    !print*,'xstar',xstar
+
+    ! Cap at 10^6 particles/s, limit for parameterization
+    if (fn.gt.1.0e+6_fp) then
+       fn=1.0e+6_fp
+    endif
+
+    ! Coefficients of total number of molecules in cluster
+    do i=1, 10
+       gb(i) = gb0(i)+gb1(i)*temp+gb2(i)*temp**2. &
+              +gb3(i)*temp**3.+gb4(i)/xstar
+    enddo
+    ! Total number of molecules in cluster
+    ntot=exp(gb(1)+gb(2)*log(rh)+gb(3)*(log(rh))**2. &
+         +gb(4)*(log(rh))**3.+gb(5)*log(cna) &
+         +gb(6)*log(rh)*log(cna)+gb(7)*log(rh)**2.*log(cna) &
+         +gb(8)*(log(cna))**2.+gb(9)*log(rh)*(log(cna))**2. &
+         +gb(10)*(log(cna))**3.)
+
+    ! cluster radius
+    rnuc=exp(-1.6524245+0.42316402*xstar+0.3346648*log(ntot)) ! [nm]
+
+10  return
+
+  end SUBROUTINE VEHK_NUCL
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: napa_nucl
+!
+! !DESCRIPTION:  Subroutine NAPA_NUCL calculates the ternary nucleation rate
+!  and radius of the critical nucleation cluster using the parameterization of
+!  .
+!     Napari, I., M. Noppel, H. Vehkamaki, and M. Kulmala. "Parametrization of
+!     Ternary Nucleation Rates for H2so4-Nh3-H2o Vapors." Journal of Geophysical
+!     Research-Atmospheres 107, no. D19 (2002).
+!  .
+!  WRITTEN BY Jeff Pierce, April 2007 for GISS GCM-II'
+!  Introduce to GEOS-Chem by Win Trivitayanurak Sep 29, 2008
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE napa_nucl(tempi,rhi,cnai,nh3ppti,fn,rnuc)
+!
+! !INPUT PARAMETERS:
+!
+    real(fp),   intent(in) :: tempi ! temperature of air [K]
+    real(fp),   intent(in) :: rhi ! relative humidity of air as a fraction
+    real(fp), intent(in) :: cnai ! concentration of gas phase sulfuric acid [molec cm-3]
+    real(fp), intent(in) :: nh3ppti ! concentration of gas phase ammonia
+!
+! !OUTPUT PARAMETERS:
+!
+    real(fp), intent(out):: fn  ! nucleation rate [cm-3 s-1]
+    real(fp), intent(out):: rnuc ! critical cluster radius [nm]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    real(fp)    ::  aa0(20),a1(20),a2(20),a3(20),fa(20) ! set parameters
+    real(fp)    ::  fnl     ! natural log of nucleation rate
+    real(fp)    ::  temp    ! temperature of air [K]
+    real(fp)    ::  rh      ! relative humidity of air as a fraction
+    real(fp)    ::  cna     ! concentration of gas phase sulfuric acid [molec cm-3]
+    real(fp)    ::  nh3ppt  ! concentration of gas phase ammonia
+    integer     ::  i       ! counter
+
+    ! Adjustable parameters
+    data aa0 /-0.355297, 3.13735, 19.0359, 1.07605, 6.0916, &
+               0.31176, -0.0200738, 0.165536, &
+               6.52645, 3.68024, -0.066514, 0.65874, &
+               0.0599321, -0.732731, 0.728429, 41.3016, &
+               -0.160336, 8.57868, 0.0530167, -2.32736        /
+
+    data a1 /-33.8449, -0.772861, -0.170957, 1.48932, -1.25378, &
+               1.64009, -0.752115, 3.26623, -0.258002, -0.204098, &
+              -7.82382, 0.190542, 5.96475, -0.0184179, 3.64736, &
+              -0.35752, 0.00889881, -0.112358, -1.98815, 0.0234646/
+
+    data a2 /0.34536, 0.00561204, 0.000479808, -0.00796052, &
+             0.00939836, -0.00343852, 0.00525813, -0.0489703, &
+             0.00143456, 0.00106259, 0.0122938, -0.00165718, &
+            -0.0362432, 0.000147186, -0.027422, 0.000904383, &
+            -5.39514d-05, 0.000472626, 0.0157827, -0.000076519/
+
+    data a3 /-0.000824007, -9.74576e-06_fp, &
+             -4.14699e-07_fp, 7.61229e-06_fp, &
+             -1.74927e-05_fp, -1.09753e-05_fp, &
+             -8.98038e-06_fp, 0.000146967, &
+             -2.02036e-06_fp, -1.2656e-06_fp, &
+              6.18554e-05_fp, 3.41744e-06_fp, &
+              4.93337e-05_fp, -2.37711e-07_fp, &
+              4.93478e-05_fp, -5.73788e-07_fp, &
+              8.39522e-08_fp, -6.48365e-07_fp, &
+             -2.93564e-05_fp, 8.0459e-08_fp   /
+
+    !=================================================================
+    ! NAPA_NUCL begins here!
+    !=================================================================
+    temp=dble(tempi)
+    rh=dble(rhi)
+    cna=cnai
+    nh3ppt=nh3ppti
+
+    ! Napari's parameterization is only valid within limited area
+    if ((cna .lt. 1.e+4_fp).or.(nh3ppt.lt.0.1)) then ! limit sulf acid and nh3 conc
+       fn = 0.
+       rnuc = 1
+       goto 10
+    endif
+    if (cna .gt. 1.0e+9_fp) cna=1.0e+9_fp ! limit sulfuric acid conc
+    if (nh3ppt .gt. 100.) nh3ppt=100. ! limit temp
+    if (temp .lt. 240.) temp=240. ! limit temp
+    if (temp .gt. 300.) temp=300. ! limit temp
+    if (rh .lt. 0.05) rh=0.05 ! limit rh
+    if (rh .gt. 0.95) rh=0.95 ! limit rh
+
+    do i=1,20
+       fa(i)=aa0(i)+a1(i)*temp+a2(i)*temp**2.+a3(i)*temp**3.
+    enddo
+
+    fnl=-84.7551+fa(1)/log(cna)+fa(2)*log(cna)+fa(3)*(log(cna))**2. &
+       +fa(4)*log(nh3ppt)+fa(5)*(log(nh3ppt))**2.+fa(6)*rh &
+       +fa(7)*log(rh)+fa(8)*log(nh3ppt)/log(cna)+fa(9)*log(nh3ppt) &
+       *log(cna)+fa(10)*rh*log(cna)+fa(11)*rh/log(cna) &
+       +fa(12)*rh &
+       *log(nh3ppt)+fa(13)*log(rh)/log(cna)+fa(14)*log(rh) &
+       *log(nh3ppt)+fa(15)*(log(nh3ppt))**2./log(cna)+fa(16)*log(cna) &
+       *(log(nh3ppt))**2.+fa(17)*(log(cna))**2.*log(nh3ppt) &
+       +fa(18)*rh &
+       *(log(nh3ppt))**2.+fa(19)*rh*log(nh3ppt)/log(cna)+fa(20) &
+       *(log(cna))**2.*(log(nh3ppt))**2.
+
+    fn=exp(fnl)
+
+    ! Try scaling down the rate by 1e-5 to see how the param is
+    ! doing on the false positive nucleation (win, 12/18/08)
+    !sensitivity simulation, change scaling factor down to 1e-4
+    fn = fn * 1.e-5
+
+    ! Cap at 10^6 particles/cm3-s, limit for parameterization
+    if (fn.gt.1.0e+6_fp) then
+       fn=1.0e+6_fp
+       fnl=log(fn)
+    endif
+
+    rnuc=0.141027-0.00122625*fnl-7.82211e-6_fp*fnl**2. &
+        -0.00156727*temp-0.00003076*temp*fnl &
+        +0.0000108375*temp**2.
+
+10  return
+
+  end subroutine napa_nucl
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: cf_nucl
+!
+! !DESCRIPTION: This subroutine calculates the barrierless nucleation rate and
+!  radius of the critical nucleation cluster using the parameterization of...
+!     Clement and Ford (1999) Atmos. Environ. 33:489-499
+!     WRITTEN BY Jeff Pierce, April 2007
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE cf_nucl(tempi,rhi,cna,nh3ppt,fn)
+!
+! !INPUT PARAMETERS:
+!
+    real(fp) tempi                ! temperature of air [K]
+    real(fp) rhi                  ! relative humidity of air as a fraction
+    double precision cna      ! concentration of gas phase sulfuric acid [molec cm-3]
+    double precision nh3ppt   ! mixing ratio of ammonia in ppt
+!
+! !OUTPUT PARAMETERS:
+!
+    double precision fn                   ! nucleation rate [cm-3 s-1]
+    double precision rnuc                 ! critical cluster radius [nm]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    double precision temp                 ! temperature of air [K]
+    double precision rh                   ! relative humidity of air as a fraction
+    double precision alpha1
+
+    temp=dble(tempi)
+    rh=dble(rhi)
+
+    if (nh3ppt .lt. 0.1) then
+       alpha1=4.276e-10*sqrt(temp/293.15) ! For sulfuric acid
+    else
+       alpha1=3.684e-10*sqrt(temp/293.15) ! For ammonium sulfate
+    endif
+    fn = alpha1*cna**2*3600.
+    ! sensitivity       fn = 1.e-3 * fn ! 10^-3 tuner
+    if (fn.gt.1.0e9) fn=1.0e9 ! For numerical conversion
+
+10  return
+
+  end subroutine cf_nucl
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: getcondsink_kerm
+!
+! !DESCRIPTION: Subroutine GETCONDSINK\_KERM calculates the condensation sink
+!  (first order loss rate of condensing gases) from the aerosol size
+!  distribution.
+!  .
+!  This is the cond sink in kerminen et al 2004 Parameterization for
+!  new particle formation AS&T Eqn 6.
+!  .
+!  Written by Jeff Pierce, May 2007 for GISS GCM-II'
+!  Introduced to GEOS-Chem by Win Trivitayanurak, Sep 29, 2008
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE getCondSink_kerm(Nko,Mko,CS,Dpmean,Dp1,dens1, &
+                              BOXVOL, TEMPTMS, PRES)
+!
+! !INPUT PARAMETERS:
+!
+    ! Nk(nBins) - number of particles per size bin in grid cell
+    ! Mk(nBins, ICOMPHARD) - mass of a given species per size bin/grid cell
+    REAL(fp), INTENT(IN)        :: Nko(nBins), Mko(nBins, ICOMPHARD)
+    REAL(fp),   INTENT(IN)        :: BOXVOL, TEMPTMS, PRES
+!
+! !OUTPUT PARAMETERS:
+!
+    REAL(fp), INTENT(OUT)       :: CS       ! CS - condensation sink [s^-1]
+    REAL(fp), INTENT(OUT)       :: Dpmean   ! the number mean diameter [m]
+    REAL(fp), INTENT(OUT)       :: Dp1      ! the size of the first size bin [m]
+    REAL(fp), INTENT(OUT)       :: dens1    ! the density of the first size bin [kg/m3]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    ! Nnuc - number of particles per size bin in grid cell
+    ! Mnuc - mass of given species in nucleation pseudo-bin (kg/grid cell)
+    ! spec - number of the species we are finding the condensation sink for
+    ! sinkfrac(nBins) - fraction of condensation sink from a bin
+    integer        :: i,j,k,c           ! counters
+    REAL(fp)       :: pi, R    ! pi and gas constant (J/mol K)
+    REAL(fp)       :: mu                  !viscosity of air (kg/m s)
+    REAL(fp)       :: mfp                 !mean free path of air molecule (m)
+    REAL*4         :: Di       !diffusivity of gas in air (m2/s)
+    REAL(fp)       :: Neps     !tolerance for number
+    REAL*4         :: density  !density [kg m^-3]
+    REAL(fp)       :: mp       !mass per particle [kg]
+    REAL(fp)       :: Dpk(nBins) !diameter of particle [m]
+    REAL(fp)       :: Kn       !Knudson number
+    REAL(fp)       :: beta(nBins) !non-continuum correction factor
+    REAL(fp)       :: Mktot    !total mass in bin [kg]
+    REAL(fp)       :: Dtot,Ntot ! used on getting the number mean diameter
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654, R=8.314) !pi and gas constant (J/mol K)
+    parameter(Neps=1.0e+10_fp)
+
+    !=================================================================
+    ! GETCONDSINK_KERM  begins here!
+    !=================================================================
+
+    ! get some parameters
+    mu=2.5277e-7*TEMPTMS**0.75302
+    !mfp=2.0*mu / ( pres*sqrt( 8.0 * 0.6589 / (pi*R*TEMPTMS) ) )  !S&P eqn 8.6
+    mfp=2.0*mu / ( pres*sqrt( 8.0 * 0.0289 / (pi*R*TEMPTMS) ) )  !S&P eqn 8.6
+    !Di=gasdiff(temp,pres,98.0,Sv(srtso4))
+    !print*,'Di',Di
+
+    ! get size dependent values
+    CS = 0.e+0_fp
+    Ntot = 0.e+0_fp
+    Dtot = 0.e+0_fp
+    do k=1,nBins
+       if (Nko(k) .gt. Neps) then
+          Mktot=0.e+0_fp
+          do j=1,ICOMPHARD
+             Mktot=Mktot+Mko(k,j)
+          enddo
+          !kpc Density should be changed due to more species involed.
+          !density=aerodens(Mko(k,srtso4),0.e+0_fp, &
+          !        Mko(k,srtnh4),Mko(k,srtnacl),Mko(k,srtecil), &
+          !        Mko(k,srtecob),Mko(k,srtocil),Mko(k,srtocob), &
+          !        Mko(k,srtdust),Mko(k,srth2o))
+          density=aerodens(Mko(k,srtso4),0.e+0_fp, &
+                  Mko(k,srtnh4),0.e+0_fp,0.e+0_fp, &
+                  0.e+0_fp,0.e+0_fp,0.e+0_fp, &
+                  0.e+0_fp,Mko(k,srth2o))
+          mp=Mktot/Nko(k)
+       else
+          !nothing in this bin - set to "typical value"
+          density=1500.
+          mp=1.4*xk(k)
+       endif
+       Dpk(k)=((mp/density)*(6./pi))**(0.333)
+       Kn=2.0*mfp/Dpk(k)      !S&P eqn 11.35 (text)
+       CS=CS+0.5e+0_fp*(Dpk(k)*Nko(k)/(dble(boxvol)*1.0e-6_fp)*(1+Kn)) &
+            /(1.e+0_fp+0.377e+0_fp*Kn+1.33e+0_fp*Kn*(1+Kn))
+       Ntot = Ntot + Nko(k)
+       Dtot = Dtot + Nko(k)*Dpk(k)
+       if (k.eq.1)then
+          Dp1=Dpk(k)
+          dens1 = density
+       endif
+    enddo
+
+    if (Ntot.gt.1e+15_fp)then
+       Dpmean = Dtot/Ntot
+    else
+       Dpmean = 150.e+0_fp
+    endif
+
+    return
+
+  END SUBROUTINE GETCONDSINK_KERM
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: getgrowthtime
+!
+! !DESCRIPTION: This subroutine calculates the time it takes for a particle to
+!  grow from one size to the next by condensation of sulfuric acid (and
+!  associated NH3 and water) onto particles.
+!  .
+!  This subroutine assumes that the growth happens entirely in the kinetic
+!  regine such that the dDp/dt is not size dependent.  The time for growth
+!  to the first size bin may then be approximated by the time for growth via
+!  sulfuric acid (not including nh4 and water) to the size of the first size bin
+!  (not including nh4 and water).
+!  WRITTEN BY Jeff Pierce, April 2007 for GISS GCM-II'
+!  Introduce to GEOS-Chem by Win Trivitayanurak (win, 9/29/08)
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE getGrowthTime (d1,d2,h2so4,temp,boxvol,density,gtime)
+!
+! !USES:
+!
+    USE ERROR_MOD,      ONLY : ERROR_STOP, IT_IS_NAN
+!
+! !INPUT PARAMETERS:
+!
+    ! d1: intial diameter [m]
+    ! d2: final diameter [m]
+    ! h2so4: h2so4 ammount [kg]
+    ! temp: temperature [K]
+    ! boxvol: box volume [cm3]
+    REAL(fp), INTENT(IN)  ::  d1,d2    ! initial and final diameters [m]
+    REAL(fp), INTENT(IN)  ::  h2so4    ! h2so4 amount [kg]
+    real(fp),   INTENT(IN)  ::  temp     ! temperature [K]
+    real(fp),   INTENT(IN)  ::  boxvol  ! box volume [cm3]
+    REAL(fp), INTENT(IN)  ::  density  ! density of particles in first bin [kg/m3]
+!
+! !OUTPUT PARAMETERS:
+!
+    ! gtime: the time it takes the particle to grow to first size bin [s]
+    REAL(fp), INTENT(OUT) ::  gtime    ! the time it will take the particle to
+                                       ! grow to first size bin [s]
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    REAL(fp)     ::  pi, R, MW
+    REAL(fp)     ::  csulf    ! concentration of sulf acid [kmol/m3]
+    REAL(fp)     ::  mspeed   ! mean speed of molecules [m/s]
+    REAL(fp)     ::  alpha    ! accomidation coef
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654e+0_fp, R=8.314e+0_fp) !pi and gas constant (J/mol K)
+    parameter(MW=98.e+0_fp) ! density [kg/m3], mol wgt sulf [kg/kmol]
+    parameter(alpha=0.65)
+
+    !=================================================================
+    ! GETGROWTHTIME begins here!
+    !=================================================================
+    !print *,'h2so4',h2so4,'MW',MW,'boxvol',boxvol,dble(boxvol)
+
+    csulf = h2so4/MW/(dble(boxvol)*1e-6_fp) ! SA conc. [kmol/m3]
+    mspeed = sqrt(8.e+0_fp*R*dble(temp)*1000.e+0_fp/(pi*MW))
+
+    ! Kinetic regime expression (S&P 11.25) solved for T
+    gtime = (d2-d1)/(4.e+0_fp*MW/density*mspeed*alpha*csulf)
+
+    if ( IT_IS_NAN(gtime) ) then
+       !jrp
+       print*,'IN GET GROWTH TIME'
+       print*,'d1',d1,'d2',d2
+       print*,'h2so4',h2so4
+       print*,'boxvol',boxvol
+       print*,'csulf',csulf,'mspeed',mspeed
+       print*,'density',density,'gtime',gtime
+       call ERROR_STOP('Found NaN in fn','getnucrate')
+    endif
+
+    RETURN
+
+  END SUBROUTINE GETGROWTHTIME
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: ezcond
+!
+! !DESCRIPTION: This subroutine takes a given amount of mass and condenses it
+!     across the bins accordingly.
+!     WRITTEN BY Jeff Pierce, May 2007 for GISS GCM-II'
+!     Put in GEOS-Chem by Win T. 9/30/08
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE EZCOND (Nki,Mki,mcondi,spec,Nkf,Mkf,surf_area, &
+                     BOXVOL, TEMPTMS, PRES, errswitch)
+!
+! !INPUT PARAMETERS:
+!
+    !Initial values of
+    !=================
+    !Nki(nBins) - number of particles per size bin in grid cell
+    !Mki(nBins, ICOMPHARD) - mass of a given species per size bin/grid cell [kg]
+    !mcond - mass of species to condense [kg/grid cell]
+    !spec - the number of the species to condense
+    double precision Nki(nBins), Mki(nBins, ICOMPHARD)
+    double precision mcondi
+    REAL(fp), INTENT(IN)       :: BOXVOL, TEMPTMS, PRES
+    LOGICAL ERRSWITCH   ! signal error to outside
+
+!
+! !OUTPUT PARAMETERS:
+!
+    !Nkf, Mkf - same as above, but final values
+    double precision Nkf(nBins), Mkf(nBins, ICOMPHARD)
+    REAL(fp)           surf_area
+    integer spec
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    integer i,j,k,c           ! counters
+    double precision mcond
+    double precision pi, R    ! pi and gas constant (J/mol K)
+    double precision CS       ! condensation sink [s^-1]
+    double precision sinkfrac(nBins+1) ! fraction of CS in size bin
+    double precision Nk1(nBins), Mk1(nBins, ICOMPHARD)
+    double precision Nk2(nBins), Mk2(nBins, ICOMPHARD)
+    double precision madd     ! mass to add to each bin [kg]
+    double precision maddp(nBins)    ! mass to add per particle [kg]
+    double precision mconds ! mass to add per step [kg]
+    integer          nsteps            ! number of condensation steps necessary
+    integer          my_floor, my_ceil       ! the floor and ceiling (temporary)
+    double precision eps     ! small number
+    double precision tdt      !the value 2/3
+    double precision mpo,mpw  !dry and "wet" mass of particle
+    double precision WR       !wet ratio
+    double precision tau(nBins) !driving force for condensation
+    double precision totsinkfrac ! total sink fraction not including nuc bin
+    double precision CSeps    ! lower limit for condensation sink
+    double precision tot_m,tot_s    !total mass, total sulfate mass
+    double precision ratio    ! used in mass correction
+    double precision fracch(nBins,ICOMPHARD)
+    double precision totch
+
+    double precision tot_i,tot_f,tot_fa ! used for conservation of mass check
+    LOGICAL          PDBG,  ERRORSWITCH
+    real(fp)         zeros(nBins)
+!
+! !DEFINED PARAMETERS:
+!
+    parameter(pi=3.141592654, R=8.314) !pi and gas constant (J/mol K)
+    parameter(eps=1.e-40_fp)
+    parameter(CSeps=1.e-20_fp)
+
+    !=================================================================
+    ! EZCOND begins here
+    !=================================================================
+
+    pdbg = errswitch ! take the signal for print debug from outside
+    errswitch = .false. !signal to terminate with error. Initialize with .false.
+
+    tdt=2.e+0_fp/3.e+0_fp
+
+    mcond=mcondi
+
+    ! initialize variables
+    do k=1,nBins
+       Nk1(k)=Nki(k)
+       do j=1,ICOMPHARD
+          Mk1(k,j)=Mki(k,j)
+       enddo
+    enddo
+
+    !print *, 'mnfix in tomas_mod:2804'
+    call mnfix(Nk1,Mk1, errorswitch)
+    if(errorswitch) then
+       print *, 'EZCOND: MNFIX[1] found error --> TERMINATE'
+       errswitch=.true.
+       return
+    endif
+
+    ! get the sink fractions
+    ! set Nnuc to zero for this calc
+    call getCondSink(Nk1,Mk1,spec,CS,sinkfrac,surf_area, &
+                     BOXVOL,TEMPTMS, PRES)
+
+    ! make sure that condensation sink isn't too small
+    if (CS.lt.CSeps) then     ! just make particles in first bin
+       Mkf(1,spec) = Mk1(1,spec) + mcond
+       Nkf(1) = Nk1(1) + mcond/sqrt(xk(1)*xk(2))
+       do j=1,ICOMPHARD
+          if (ICOMPHARD.ne.spec) then
+             Mkf(1,j) = Mk1(1,j)
+          endif
+       enddo
+       do k=2,nBins
+          Nkf(k) = Nk1(k)
+          do j=1,ICOMPHARD
+             Mkf(k,j) = Mk1(k,j)
+          enddo
+       enddo
+       return
+    endif
+
+    if (pdbg) then
+       print*,'CS',CS
+       print*,'sinkfrac',sinkfrac
+       print*,'mcond',mcond
+    endif
+
+    ! determine how much mass to add to each size bin
+    ! also determine how many condensation steps we need
+    totsinkfrac = 0.e+0_fp
+    do k=1,nBins
+       totsinkfrac = totsinkfrac + sinkfrac(k) ! get sink frac total not including nuc bin
+    enddo
+    nsteps = 1
+    do k=1,nBins
+       if (sinkfrac(k).lt.1.0e-20_fp)then
+          madd = 0.e+0_fp
+       else
+          madd = mcond*sinkfrac(k)/totsinkfrac
+       endif
+       mpo=0.0
+       do j=1,ICOMPHARD-2
+          mpo=mpo + Mk1(k,j)
+       enddo
+       if(mpo == 0.0 ) then  ! prevent division by zero (win, 10/16/08)
+          my_floor = 0
+       else
+          my_floor = int(madd*0.00001/mpo)
+       endif
+       my_ceil = my_floor + 1
+       nsteps = max(nsteps,my_ceil) ! don't let the mass increase by more than 10%
+    enddo
+
+    if(pdbg) print*,'nsteps',nsteps
+
+    ! mass to condense each step
+    mconds = mcond/nsteps
+
+    ! do steps of condensation
+    do i=1,nsteps
+       if (i.ne.1) then
+          ! set Nnuc to zero for this calculation
+          call getCondSink(Nk1,Mk1,spec,CS,sinkfrac,surf_area, &
+                           BOXVOL,TEMPTMS, PRES)
+          totsinkfrac = 0.e+0_fp
+          do k=1,nBins
+             totsinkfrac = totsinkfrac + sinkfrac(k) ! get sink frac total not including nuc bin
+          enddo
+       endif
+
+       tot_m=0.e+0_fp
+       tot_s=0.e+0_fp
+       do k=1,nBins
+          do j=1,ICOMPHARD-2
+             tot_m = tot_m + Mk1(k,j)
+             if (j.eq.srtso4) then
+                tot_s = tot_s + Mk1(k,j)
+             endif
+          enddo
+       enddo
+
+       if (pdbg) print *,'tot_s ',tot_s,' tot_m ',tot_m
+
+       ! change criteria to bigger amount (win, 9/30/08)
+       if (mcond.gt.tot_m*5.0e-2_fp) then
+          if (pdbg) print *,'Entering TMCOND '
+
+          do k=1,nBins
+             mpo=0.0
+             mpw=0.0
+             !WIN'S CODE MODIFICATION 6/19/06
+             !THIS MUST CHANGED WITH THE NEW dmdt_int
+             do j=1,ICOMPHARD-2
+                mpo = mpo+Mk1(k,j) !accumulate dry mass
+             enddo
+             do j=1,ICOMPHARD
+                mpw = mpw+Mk1(k,j) ! have wet mass include amso4
+             enddo
+             if( mpo > 0.0 ) then    ! prevent division by zero (win, 10/16/08)
+                WR = mpw/mpo  !WR = wet ratio = total mass/dry mass
+             else
+                WR = 1.0
+             endif
+             if (Nk1(k) .gt. 0.e+0_fp) then
+                !Change maddp(k) from mass/no. to be just mass (win,10/3/08)
+                ! this is because in tmcond here, the moxd argument takes
+                ! mass to add for each bin array, not mass/no. array.
+                maddp(k) = mconds*sinkfrac(k)/totsinkfrac
+                !Prior to 10/3/08 (win)
+                !maddp(k) = mconds*sinkfrac(k)/totsinkfrac/Nk1(k)
+                mpw=mpw/Nk1(k)
+
+                if(pdbg) print*,'mpw',mpw,'maddp',maddp(k),'WR',WR
+                !Change the maddp(k) to accordingly -- adding the /Nk1(k) (win, 10/3/08)
+                tau(k)=1.5e+0_fp*((mpw+maddp(k)/Nk1(k)*WR)**tdt-mpw**tdt)
+                ! Prior to 10/3/08 (win)
+                !tau(k)=1.5e+0_fp*((mpw+maddp(k)*WR)**tdt-mpw**tdt) !added WR to moxid term (win, 5/15/06)
+                !     tau(k)=0.e+0_fp
+                !     maddp(k)=0.e+0_fp
+             else
+                !nothing in this bin - set tau to zero
+                tau(k)=0.e+0_fp
+                maddp(k) = 0.e+0_fp
+             endif
+          enddo
+          !print*,'tau',tau
+          !print *, 'mnfix in tomas_mod:2942'
+          call mnfix(Nk1,Mk1, errorswitch)
+          if (errorswitch) then
+             print *, 'EZCOND: MNFIX[2] found error --> TERMINATE'
+             errswitch=.true.
+             return
+          endif
+          ! do condensation
+          errorswitch = pdbg
+          !prior to 9/30/08 from Jeff's version
+          call tmcond(tau,xk,Mk1,Nk1,Mk2,Nk2,spec,errorswitch,maddp)
+
+          ! For SO4 condensation, the last argument should be zeroes (win, 9/30/08)
+          !zeros(:) = 0.e+0_fp
+          !call tmcond(tau,xk,Mk1,Nk1,Mk2,Nk2,spec,errorswitch,zeros)
+
+          if( errorswitch) then
+             errswitch=.true.
+             print *,'EZCOND: error after TMCOND --> TERMINATE'
+             return
+          endif
+          errorswitch = pdbg
+
+          !call tmcond(tau,xk,Mk1,Nk1,Mk2,Nk2,spec)
+          !jrp totch=0.0
+          !jrp do k=1,ibins
+          !jrp    do j=1,icomp
+          !jrp       fracch(k,j)=(Mk2(k,j)-Mk1(k,j))
+          !jrp       totch = totch + (Mk2(k,j)-Mk1(k,j))
+          !jrp    enddo
+          !jrp enddo
+          !print*,'fracch',fracch,'totch',totch
+
+       elseif (mcond.gt.tot_s*1.0e-12_fp) then
+          if (pdbg) print *,'Small mcond: distrib w/ sinkfrac '
+          if (pdbg) print *, 'maddp(bin) to add to SO4'
+          do k=1,nBins
+             if (Nk1(k) .gt. 0.e+0_fp) then
+                maddp(k) = mconds*sinkfrac(k)/totsinkfrac
+             else
+                maddp(k) = 0.e+0_fp
+             endif
+             if(pdbg) print *, maddp(k)
+             Mk2(k,srtso4)=Mk1(k,srtso4)+maddp(k)
+             do j=1,ICOMPHARD
+                if (j.ne.srtso4) then
+                   Mk2(k,j)=Mk1(k,j)
+                endif
+             enddo
+             Nk2(k)=Nk1(k)
+          enddo
+          if(pdbg) errorswitch = .true.
+
+          !print *, 'mnfix in tomas_mod:2999'
+          call mnfix(Nk2,Mk2, errorswitch)
+          if(errorswitch) then
+             print *, 'EZCOND: MNFIX[3] found error --> TERMINATE'
+             errswitch=.true.
+             return
+          endif
+       else ! do nothing
+          if (pdbg) print *,'Very small mcond: do nothing!'
+          mcond = 0.e+0_fp
+          do k=1,nBins
+             Nk2(k)=Nk1(k)
+             do j=1,ICOMPHARD
+                Mk2(k,j)=Mk1(k,j)
+             enddo
+          enddo
+       endif
+       if (i.ne.nsteps)then
+          do k=1,nBins
+             Nk1(k)=Nk2(k)
+             do j=1,ICOMPHARD
+                Mk1(k,j)=Mk2(k,j)
+             enddo
+          enddo
+       endif
+
+    enddo
+
+    do k=1,nBins
+       Nkf(k)=Nk2(k)
+       do j=1,ICOMPHARD
+          Mkf(k,j)=Mk2(k,j)
+       enddo
+    enddo
+
+    ! check for conservation of mass
+    tot_i = 0.e+0_fp
+    tot_fa = mcond
+    tot_f = 0.e+0_fp
+    do k=1,nBins
+       tot_i=tot_i+Mki(k,srtso4)
+       tot_f=tot_f+Mkf(k,srtso4)
+       tot_fa=tot_fa+Mki(k,srtso4)
+    enddo
+
+    if(pdbg) then
+       print *,'Check conserv of mass after mcond is distrib'
+       print *,' Initial total so4 ',tot_i
+       print *,' Final total so4   ',tot_f
+       print *,'Percent error=',abs((mcond-(tot_f-tot_i))/mcond)*1e2
+    endif
+
+    if ( mcond > 0.0_fp ) then
+       if ( abs((mcond-(tot_f-tot_i))/mcond).gt.0.e+0_fp) then
+          IF(mcond > 1.e-8_fp .and. tot_i > 5.e-2_fp)  THEN
+             !Add a check to check error if mcond is significant (win, 10/2/08)
+
+             IF (abs((mcond-(tot_f-tot_i))/mcond).lt.1.e+0_fp .OR. &
+                  spinup(31.0) ) THEN
+                !Prior to 10/2/08 (win)   .. original was Jeff's fix
+                !! do correction of mass
+                !ratio = (tot_f-tot_i)/mcond
+                !if(pdbg) print *,'Mk at mass correction '
+                !if(pdbg) print *,'  ratio',ratio
+                !do k=1,ibins
+                !   Mkf(k,srtso4)=Mki(k,srtso4)+
+                !   &              (Mkf(k,srtso4)-Mki(k,srtso4))/ratio
+                !   if(pdbg) print *,Mkf(k,srtso4)
+                !enddo
+
+                ! Do mass correction (win, 10/2/08)
+                ratio = (tot_i+mcond)/tot_f
+                if(pdbg) print *,'Mk at mass correction apply ratio= ',ratio
+                do k=1,nBins
+                   Mkf(k,srtso4)=Mkf(k,srtso4) * ratio
+                   if(pdbg) print *,Mkf(k,srtso4)
+                enddo
+
+                if(pdbg) errorswitch=.true.
+                !print *, 'mnfix in tomas_mod:3079'
+                call mnfix(Nkf,Mkf, errorswitch)
+                if(errorswitch) then
+                   print *, 'EZCOND: MNFIX[4] found error --> TERMINATE'
+                   errswitch=.true.
+                   return
+                endif
+             else
+                print*,'ERROR in ezcond'
+                print*,'Condensation error',(mcond-(tot_f-tot_i))/mcond
+                print*,'mcond',mcond,'change',tot_f-tot_i
+                print*,'tot_i',tot_i,'tot_fa',tot_fa,'tot_f',tot_f
+                print*,'Nki',Nki
+                print*,'Nkf',Nkf
+                print*,'Mki',Mki
+                print*,'Mkf',Mkf
+                !Prior to 10/2/08 (win)
+                !STOP
+                ! Send error signal to outside and terminate with more info
+                ! (win, 10/2/08)
+                !!as of 10/27/08, try comment out this signal to stop the run
+                ! (win, 10/27/08)
+                !! the problem is that maybe or mostly the mass conservation is
+                ! ruined becuase of the fudging inside mnfix.
+                !ERRSWITCH=.TRUE.
+                !RETURN
+             ENDIF
+          ENDIF
+       endif
+    endif
+
+    !jrp if (abs(tot_f-tot_fa)/tot_i.gt.1.0D-8)then
+    !jrp    print*,'No S conservation in ezcond'
+    !jrp    print*,'initial',tot_fa
+    !jrp    print*,'final',tot_f
+    !jrp    print*,'mcond',mcond,'change',tot_f-tot_i
+    !jrp    print*,'ERROR',(mcond-(tot_f-tot_i))/mcond
+    !jrp endif
+
+    ! check for conservation of mass
+    tot_i = 0.e+0_fp
+    tot_f = 0.e+0_fp
+    do k=1,nBins
+       tot_i=tot_i+Mki(k,srtnh4)
+       tot_f=tot_f+Mkf(k,srtnh4)
+    enddo
+    if (.not. spinup(14.0)) then
+       if (abs(tot_f-tot_i)/tot_i.gt.1.0e-8_fp)then
+          if ( tot_i > 1.0e-20_fp ) then
+             print*,'No N conservation in ezcond'
+             print*,'initial',tot_i
+             print*,'final  ',tot_f
+          endif
+       endif
+    endif
+
+    return
+
+  end SUBROUTINE EZCOND
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: tmcond
+!
+! !DESCRIPTION: Subroutine TMCOND do condensation calculation.
+!  Original code from Peter Adams
+!  Modified for GEOS-CHEM by Win Trivitayaurak (win@cmu.edu)
+!  CONDENSATION
+!   Based on Tzivion, Feingold, Levin, JAS 1989 and
+!   Stevens, Feingold, Cotton, JAS 1996
+!\\
+!\\
+! !INTERFACE:
+!
+  SUBROUTINE TMCOND(TAU,X,AMKD,ANKD,AMK,ANK,CSPECIES,pdbug,moxd)
+!
+! !INPUT PARAMETERS:
+!
+    ! TAU(k) ...... Forcing for diffusion = (2/3)*CPT*ETA_BAR*DELTA_T
+    ! X(K) ........ Array of bin limits in mass space
+    ! AMKD(K,J) ... Input array of mass moments
+    ! ANKD(K) ..... Input array of number moments
+    ! CSPECIES .... Index of chemical species that is condensing
+    REAL(fp)       :: TAU(nBins)
+    REAL(fp)       :: X(nBins+1),AMKD(nBins,ICOMPHARD),ANKD(nBins)
+    INTEGER        :: CSPECIES
+    LOGICAL        :: pdbug !(win, 4/10/06)
+    REAL(fp)       :: moxd(nBins) ! condensing mass distributed to size bins
+                       ! according to the selected absorbing media (win, 3/5/08)
+!
+! !OUTPUT PARAMETERS:
+!
+    ! AMK(K,J) .... Output array of mass moments
+    ! ANK(K) ...... Output array of number moments
+    REAL(fp)       :: AMK(nBins,ICOMPHARD),ANK(nBins)
+!
+! !REMARKS:
+! The supersaturation is calculated outside of the routine and assumed
+! to be constant at its average value over the timestep.
+! .
+! The method has three basic components:
+! (1) first a top hat representation of the distribution is construced
+!     in each bin and these are translated according to the analytic
+!     solutions
+! (2) The translated tophats are then remapped to bins.  Here if a
+!     top hat entirely or in part lies below the lowest bin it is
+!     not counted.
+!     .
+! Additional notes (Peter Adams)
+!     .
+!     I have changed the routine to handle multicomponent aerosols.  The
+!     arrays of mass moments are now two dimensional (size and species).
+!     Only a single component (CSPECIES) is allowed to condense during
+!     a given call to this routine.  Multicomponent condensation/evaporation
+!     is accomplished via multiple calls.  Variables YLC and YUC are
+!     similar to YL and YU except that they refer to the mass of the
+!     condensing species, rather than total aerosol mass.
+!     .
+!     I have removed ventilation variables (VSW/VNTF) from the subroutine
+!     call.  They still exist internally within this subroutine, but
+!     are initialized such that they do nothing.
+!     .
+!     I have created a new variable, AMKDRY, which is the total mass in
+!     a size bin (sum of all chemical components excluding water).  I
+!     have also created WR, which is the ratio of total wet mass to
+!     total dry mass in a size bin.
+!     .
+!     AMKC(k,j) is the total amount of mass after condensation of species
+!     j in particles that BEGAN in bin k.  It is used as a diagnostic
+!     for tracking down numerical errors.
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    INTEGER        :: L,I,J,K,IMN
+    REAL(fp)       :: DN,DM,DYI,XL,XU,YL,YLC,YU,YUC
+    REAL(fp)       :: TEPS,NEPS,NEPS2,EX2,ZERO
+    REAL(fp)       :: XI,XX,XP,YM,WTH,W1,W2,WW,AVG
+    REAL(fp)       :: VSW,VNTF(nBins)
+    REAL(fp)       :: TAU_L, maxtau
+
+    REAL(fp)       :: AMKDRY(nBins), WR(nBins), AMKWET(nBins)
+    REAL(fp)       :: AMKDRYSOL(nBins)
+
+    LOGICAL        :: errspot !(win, 4/12/06)
+
+    REAL(fp)       :: c1, c2 !correction factor (win, 5/25/06)
+    REAL(fp)       :: madd(nBins) !condensing mass to be added by aqoxid
+                                  !or SOAcond. For error fixing (win, 9/27/07)
+    REAL(fp)       :: xadd(nBins) !mass per particle to be added by aqoxid
+                                  ! or SOAcond. For error fixing (win, 9/27/07)
+    REAL(fp)       :: macc !accumulating the condensing mass (win, 7/24/06)
+    REAL(fp)       :: delt1,delt2 !the delta = mass not conserved (win, 7/24/06)
+    REAL(fp)       :: dummy, xtra,maddtot ! for mass conserv fixing (win, 9/27/07)
+    integer        :: kk !counter (wint, 7/24/06)
+    REAL(fp)       :: AMKD_tot
+
+    PARAMETER (TEPS=1.0e-40_fp,NEPS=1.0e-20_fp)
+    PARAMETER (EX2=2.e+0_fp/3.e+0_fp,ZERO=0.0e+0_fp)
+    PARAMETER (NEPS2=1.0e-10_fp)
+
+    !=================================================================
+    ! TMCOND begins here!
+    !=================================================================
+
+3   format(I4,200E20.11)
+
+    !<step4.5> This first check cause the error of 'number not conserved'
+    ! though only with the small amounts because when ANKD(k) = 0.e+0_fp from start,
+    ! the original check just give it a value NEPS = 1.d-20, and then undergo
+    ! tmcond calculation.   I'm changing the check to if ANKD(k)= 0.e+0_fp,
+    ! then keep it that way and make the following calculations skip when
+    ! ANKD(k) is zero (win, 10/18/05)
+
+    ! If any ANKD are zero, set them to a small value to avoid division by zero
+    !do k=1,ibins
+    !   if (ANKD(k) .lt. NEPS) then
+    !      ANKD(k)=NEPS
+    !      AMKD(k,srtso4)=NEPS*1.4*xk(k) !make the added particles SO4
+    !   endif
+    !enddo
+
+    !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    !<step5.1> Add print for debugging (win, 4/10/06)
+    if (pdbug) then
+       ! call debugprint(ANKD, AMKD, 0,0,0,'Entering TMCOND')
+       ! print *, 'TMCOND:entering*************************'
+       ! print *,'Nk(1:30)'
+       ! print *, ANKD(1:30)
+       ! print *,'Mk(1:30,comp)'
+       ! do j=1,icomp
+       ! print *,'comp',j
+       ! print *, AMKD(1:30,j)
+       ! enddo
+    endif
+    !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    errspot = .false. !initialize error signal as false (Win, 4/12/06)
+
+    !pja Sometimes, after repeated condensation calls, the average bin mass
+    !pja can be just above the bin boundary - in that case, transfer a some
+    !pja to the next highest bin
+    !sfarina this is also true when small particles are growing really fast?
+    !sfarina SOACOND throws thousands of errors for XI < 1
+    !sfarina what this really means is AVG particle massfor bin k > XK(k+1)
+    !sfarina through the debugger I found that mostly the difference is small
+    do k=1,nBins-1
+       if ( ANKD(k) .lt. NEPS2) goto 300 !<step4.5> (win, 10/18/05)
+       ! Modify the check to include all dry mass (win, 10/3/08)
+       AMKD_tot = 0.e+0_fp
+       do kk=1,ICOMPHARD-2
+          AMKD_tot = AMKD_tot + AMKD(k,kk)
+       enddo
+       if ((AMKD_tot)/ANKD(k).gt.xk(k+1)) then
+          !Prior to 10/3/08 (win)
+          !if ((AMKD(k,srtso4))/ANKD(k).gt.xk(k+1)) then
+          !sfarina: this does noting to help our avg mass per particle
+          !         falling outside of bin boundaries:
+          !         amkd_tot / ankd(k) = (amkd_tot * 0.9) / (ankd(k) * 0.9)
+          !         we need to shift more mass than number.
+          !         assuming we have some kind of distributionof particle sizes in bin K
+          !         the largest ones will have more mass than average, so we can safly move
+          !         more mass than number.
+          !         that or we redistribute mass before SOAcond
+          !
+          do j=1,ICOMPHARD-2
+             AMKD(k+1,j)=AMKD(k+1,j)+0.1e+0_fp*AMKD(k,j)
+             AMKD(k,j)=AMKD(k,j)*0.9e+0_fp
+          enddo
+          ANKD(k+1)=ANKD(k+1)+0.1e+0_fp*ANKD(k)
+          ANKD(k)=ANKD(k)*0.9e+0_fp
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+          !<step5.1> Add print for debugging (win, 4/10/06)
+          if (pdbug) then
+             print *, 'Modified at checkpoint1: BIN',k
+             print *,'ANKD(k)',ANKD(k),'ANKD(k+1)',ANKD(k+1)
+             print *,'Mk(k,comp)       Mk(k+1,comp)'
+             do j=1,ICOMPHARD
+                print *,'comp',j
+                print *, AMKD(k,j), AMKD(k+1,j)
+             enddo
+          endif
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+       endif
+300    continue   !<step4.5> If aerosol number is zero (win, 10/18/05)
+
+    enddo
+
+    !pja Initialize ventilation variables so they don't do anything
+    VSW=0.0e+0_fp
+    DO L=1,nBins
+       VNTF(L)=0.0e+0_fp
+    ENDDO
+
+    !pja Initialize AMKDRY and WR
+    DO L=1,nBins
+       AMKDRY(L)=0.e+0_fp
+       AMKWET(L)=0.e+0_fp
+       AMKDRYSOL(L) = 0.e+0_fp
+       DO J=1,ICOMPHARD-2     ! dry mass excl. nh4 (win, 9/26/08)
+          AMKDRY(L)=AMKDRY(L)+AMKD(L,J)
+          ! Accumulate the absorbing media (win, 3/5/08)
+          IF ( J == SRTOCIL  ) &
+               AMKDRYSOL(L) = AMKDRYSOL(L) + AMKD(L,J)
+       ENDDO
+       DO J=1,ICOMPHARD
+          AMKWET(L) = AMKWET(L) + AMKD(L,J)
+       ENDDO
+       if (AMKDRY(L) .gt. 0.e+0_fp) &   !<step4.5> In case there is no mass, then just skip (win, 10/18/05)
+            WR(L)= AMKWET(L) / AMKDRY(L)
+    ENDDO
+
+    !debug%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    if(pdbug)then
+       print*,'AMKDRY(1:nBins)'
+       print *,AMKDRY(1:nBins)
+       print *,'WR(1:nBins)'
+       print *,WR(1:nBins)
+    endif
+    !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    !pja Initialize X() array of particle masses based on xk()
+    DO L=1,nBins
+       X(L)=xk(L)
+    ENDDO
+
+    !
+    ! Only solve when significant forcing is available
+    !
+    maxtau=0.0e+0_fp
+    do l=1,nBins
+       maxtau=max(maxtau,abs(TAU(l)))
+    enddo
+
+    !debug%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    if(pdbug) then
+       print*,'tau(1:nBins)'
+       print *,tau(1:nBins)
+    endif
+    !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    IF(ABS(maxtau).LT.TEPS)THEN
+       DO L=1,nBins
+          DO J=1,ICOMPHARD
+             AMK(L,J)=AMKD(L,J)
+          ENDDO
+          ANK(L)=ANKD(L)
+       ENDDO
+    ELSE
+       !<step5.3> Try to fix the error of mass conservation
+       ! during aqueous oxidation. Too little mass is used up
+       ! (win, 7/24/06)
+       IF ( MAXVAL(MOXD(:)) >  0e+0_fp ) THEN
+          IF( PDBUG ) PRINT *,'Mass_to_add_by_aqoxid_or_SOAcond'
+          maddtot = 0e+0_fp
+          DO L = 1, nBins
+             IF(TAU(L) >  0e+0_fp ) THEN
+                MADD(L) = MOXD(L)
+                XADD(L) = MOXD(L) / ANKD(L)
+                !IF( CSPECIES == SRTSO4 ) THEN
+                !   MADD(L) = MOXD * ANKD(L)  ! absolute condensing mass
+                !   XADD(L) = MOXD            ! mass per particle
+                !ELSE IF ( CSPECIES == SRTOCIL ) THEN
+                !   MADD(L) = MOXD * AMKDRYSOL(L)
+                !   XADD(L) = MADD(L) / ANKD(L)
+                !ELSE
+                !   PRINT *,'TMCOND ERROR : mass fixing not supported'
+                !ENDIF
+             ELSE
+                MADD(L) = 0e+0_fp
+                XADD(L) = 0e+0_fp
+             ENDIF
+             IF ( PDBUG ) PRINT *,L,madd(L), xadd(L)
+             maddtot = maddtot + madd(L)
+          ENDDO
+       ENDIF
+
+       DO L=1,nBins
+          DO J=1,ICOMPHARD
+             AMK(L,J)=0.e+0_fp
+          ENDDO
+          ANK(L)=0.e+0_fp
+       ENDDO
+       WW=0.5e+0_fp
+       ! IF(TAU.LT.0.)WW=.5e+0_fp
+       !
+       ! identify tophats and do lagrangian growth
+       !
+       DO L=1,nBins
+          IF(ANKD(L) .LT. NEPS2)GOTO 200 !skip if Number is effectively zero
+
+          !if tau is zero, leave everything in same bin
+          IF (TAU(L) .EQ. 0.) THEN
+             ANK(L)=ANK(L)+ANKD(L)
+             DO J=1,ICOMPHARD
+                AMK(L,J)=AMK(L,J)+AMKD(L,J)
+             ENDDO
+          ENDIF
+          IF (TAU(L) .EQ. 0.) GOTO 200
+
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+          !<step5.1> Add print for debugging (win, 4/10/06)
+          if (pdbug) then
+             print *, 'Identify_tophat_and_grow-BIN',L
+             print *,'Starting_Nk(1:nBins)'
+             print *, ANK(1:nBins)
+             print *,'Starting_Mk(1:nBins,comp)'
+             do j=1,ICOMPHARD-1
+                print *,'comp',j
+                print *, AMK(1:nBins,j)
+             enddo
+          endif
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+          !pja Limiting AVG, the average particle size to lie within the size
+          !pja bounds causes particles to grow or shrink arbitrarily and is
+          !pja wreacking havoc with choosing condensational timesteps and
+          !pja conserving mass.  I have turned them off.
+          !AVG=MAX(X(L),MIN(X(L+1),AMKDRY(L)/(NEPS+ANKD(L))))
+          !try bring the above line back, win 4/10/06
+          !win 4/10/06
+
+          AVG=AMKDRY(L)/ANKD(L)
+          XX=X(L)/AVG
+
+#if defined(TOMAS12) || defined(TOMAS15)
+          if(l.lt.nBins-1)then ! bin quadrupuling
+             XI=.5e+0_fp + XX*(2.5e+0_fp - 2.0e+0_fp*XX)
+             !XI<1 means the AVG falls out of bin bounds
+             if (XI .LT. 1.e+0_fp) then
+                !W1 will have sqrt of negative number
+                write(*,*)'ERROR: tmcond - XI<1 for bin: ',L
+                write(*,*)'AVG is ',AVG
+                write(*,*)'Nk is ', ANKD(L)
+                write(*,*)'Mk are ', (AMKD(L,j),j=1,ICOMPHARD)
+                write(*,*)'Initial N and M are: ',ANKD(L),AMKDRY(L)
+                errspot = .true.
+                RETURN
+             endif
+             W1 =SQRT(12.e+0_fp*(XI-1.e+0_fp))*AVG/4.0e+0_fp ! cyhl 4.0=xk(k+1)/xk(k)
+             W2 =(MIN(X(L+1)-AVG,AVG-X(L)))*2.0e+0_fp
+          else ! final 2 bins mass*32
+             XI=.5e+0_fp + XX*(16.5e+0_fp - 16.0e+0_fp*XX)
+             if (XI .LT. 1.e+0_fp) then
+                !W1 will have sqrt of negative number
+                write(*,*)'ERROR: tmcond - XI<1 for bin: ',L
+                write(*,*)'lower limit is',X(L)
+                write(*,*)'AVG is ',AVG
+                write(*,*)'Nk is ', ANKD(L)
+                write(*,*)'Mk are ', (AMKD(L,j),j=1,ICOMPHARD)
+                write(*,*)'Initial N and M are: ',ANKD(L),AMKDRY(L)
+                errspot = .true.
+                RETURN
+             endif
+             W1 =SQRT(12.e+0_fp*(XI-1.e+0_fp))*AVG/32.0e+0_fp ! cyhl 32.0=xk(k+1)/xk(k)
+             W2 =(MIN(X(L+1)-AVG,AVG-X(L)))*2.0e+0_fp
+          endif
+#else
+          XI=.5e+0_fp + XX*(1.5e+0_fp - XX)
+          !XI<1 means the AVG falls out of bin bounds
+
+          if (XI .LT. 1.e+0_fp) then
+             !W1 will have sqrt of negative number
+             write(*,*)'ERROR: tmcond - XI<1 for bin: ',L
+             write(*,*)'AVG is ',AVG
+             write(*,*)'Nk is ', ANKD(L)
+             write(*,*)'Mk are ', (AMKD(L,j),j=1,ICOMPHARD)
+             write(*,*)'Initial N and M are: ',ANKD(L),AMKDRY(L)
+             errspot = .true.
+             RETURN
+          endif
+          W1 =SQRT(12.e+0_fp*(XI-1.e+0_fp))*AVG
+          W2 =MIN(X(L+1)-AVG,AVG-X(L))
+#endif
+
+          WTH=W1*WW+W2*(1.e+0_fp-WW)
+          IF(WTH.GT.1.) then
+             write(*,*)'WTH>1 in cond, bin #',L
+             errspot = .true.
+             RETURN
+          ENDIF
+
+          XU=AVG+WTH*.5e+0_fp
+          XL=AVG-WTH*.5e+0_fp
+          ! Ventilation added bin-by-bin
+          TAU_L=TAU(l)*MAX(1.e+0_fp,VNTF(L)*VSW)
+          IF(TAU_L/TAU(l).GT. 6.) THEN
+             PRINT *,'TAU..>6.',TAU(l),TAU_L,VSW,L
+          ENDIF
+          IF(TAU_L.GT.TAU(l)) THEN
+             PRINT *,'TAU...',TAU(l),TAU_L,VSW,L
+          ENDIF
+          ! prior to 5/25/06 (win)
+          !YU=DMDT_INT(XU,TAU_L,WR(L))
+          !YUC=XU*AMKD(L,CSPECIES)/AMKDRY(L)+YU-XU
+          !IF (YU .GT. X(ibins+1) ) THEN
+          !   YUC=YUC*X(ibins+1)/YU
+          !   YU=X(ibins+1)
+          !ENDIF
+          !YL=DMDT_INT(XL,TAU_L,WR(L))
+          !YLC=XL*AMKD(L,CSPECIES)/AMKDRY(L)+YL-XL
+          !add new correction factor to YU and YL (win, 5/25/06)
+          YU=DMDT_INT(XU,TAU_L,WR(L))
+          YL=DMDT_INT(XL,TAU_L,WR(L))
+
+          ! change to check MOXD of current bin (win, 10/3/08)
+          IF( MOXD(L) == 0e+0_fp) THEN
+             !Prior to 10/3/08 (win)
+             !IF( MAXVAL(MOXD(:)) == 0e+0_fp ) THEN
+             C1=1.e+0_fp          !for so4cond call, without correction factor.
+          ELSE
+             C1 = XADD(L)*2.e+0_fp/(YU+YL-XU-XL)
+          ENDIF
+          C2 = C1 - ( C1 - 1.e+0_fp ) * ( XU + XL )/( YU + YL )
+          !prior to 10/2/08 (win)
+          YU = YU * C2
+          YL = YL * C2
+          ! Run into a problem that YU < XU creating YUC<0
+          ! So let's limit the application of C2 to only if
+          ! it does not result in YU < XU and YL < XL (win, 10/2/08)
+          !IF(TAU_L > 0.e+0_fp) YU = max( YU*C2, XU )
+          !IF(TAU_L > 0.e+0_fp) YL = max( YL*C2, XL )
+
+          !end part for fudging to get higher AVG
+
+          YUC=XU*AMKD(L,CSPECIES)/AMKDRY(L)+YU-XU
+          IF (YU .GT. X(nBins+1) ) THEN
+             !IF(.not.SPINUP(60.)) write(116,*) &
+             !     'YU > Xk(30+1) ++++++++++++' !debug (win, 7/17/06)
+             YUC=YUC*X(nBins+1)/YU
+             YU=X(nBins+1)
+             !errspot=.true.  !just try temp (win, 7/30/07)
+          ENDIF
+          YLC=XL*AMKD(L,CSPECIES)/AMKDRY(L)+YL-XL
+          DYI=1.e+0_fp/(YU-YL)
+
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+          !<step5.2> Debug why there is extra mass added when called
+          ! by aqoxid. (win, 5/10/06)
+          if (pdbug) then
+             print *, 'XU',XU,'YU',YU,'YUC',YUC,'c2',c2
+             print *, 'XL',XL,'YL',YL,'YLC',YLC
+          endif
+          !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+          !deal with tiny negative (win, 5/28/06)
+          if(YUC.lt.0e+0_fp .or. YLC.lt.0e+0_fp)then
+             if(YLC.lt.0e+0_fp) YLC=0e+0_fp
+             if(YUC.lt.0e+0_fp) then
+                YUC = 0e+0_fp
+                YLC = 0e+0_fp
+             endif
+             if(pdbug) print *,'Fudge negative YUC, YLC to zero'
+          endif
+          !
+          ! deal with portion of distribution that lies below lowest gridpoint
+          !
+          IF(YL.LT.X(1))THEN
+
+             !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+             !<step5.2> Debug step-by-step (win, 5/10/06)
+             if (pdbug) print *,'YL<X(1)_Just_condensing_to_current_bin'
+             !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+             !pja Instead of the following, I will just add all new condensed
+             !pja mass to the same size bin
+             !if ((YL/XL-1.e+0_fp) .LT. 1.e-3_fp) then
+             !   !insignificant growth - leave alone
+             !   ANK(L)=ANK(L)+ANKD(L)
+             !   DO J=1,icomp-1
+             !      AMK(L,J)=AMK(L,J)+AMKD(L,J)
+             !   ENDDO
+             !   GOTO 200
+             !else
+             !   !subtract out lower portion
+             !   write(*,*)'ERROR in cond - low portion subtracted'
+             !   write(*,*) 'Nk,Mk: ',ANKD(L),AMKD(L,1),AMKD(L,2)
+             !   write(*,*) 'TAU: ', TAU_L
+             !   write(*,*) 'XL, YL, YLC: ',XL,YL,YLC
+             !   write(*,*) 'XU, YU, YUC: ',XU,YU,YUC
+             !   ANKD(L)=ANKD(L)*MAX(ZERO,(YU-X(1)))*DYI
+             !   YL=X(1)
+             !   YLC=X(1)*AMKD(1,CSPECIES)/AMKDRY(1)
+             !   DYI=1.e+0_fp/(YU-YL)
+             !endif
+             ANK(L)=ANK(L)+ANKD(L)
+             do j=1,ICOMPHARD
+                if (J.EQ.CSPECIES) then
+                   AMK(L,J)=AMK(L,J)+(YUC+YLC)*.5e+0_fp*ANKD(L)
+                else
+                   AMK(L,J)=AMK(L,J)+AMKD(L,J)
+                endif
+             enddo
+             GOTO 200
+          ENDIF
+          IF(YU.LT.X(1))GOTO 200
+          !
+          ! Begin remapping (start search at present location if condensation)
+          !
+          IMN=1
+          IF(TAU(l).GT.0.)IMN=L
+          DO I=IMN,nBins
+             !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+             !<step5.2> Debug step-by-step (win, 5/10/06)
+             if(pdbug) print *,'Now_remapping_in_bin',I
+             !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+             IF(YL.LT.X(I+1))THEN
+                ![1] lower bound of new tophat in the current I bin
+                IF(YU.LE.X(I+1))THEN
+                   ![2] upper bound of new tophat also in the current I bin
+                   DN=ANKD(L)      ! DN = number from the bin L being remapped
+                   do j=1,ICOMPHARD
+                      DM=AMKD(L,J)
+                      IF (J.EQ.CSPECIES) THEN
+                         !Add mass from new tophat to the existing mass of bin I
+                         AMK(I,J)=(YUC+YLC)*.5e+0_fp*DN+AMK(I,J)
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         !<step5.2> Debug step-by-step (win, 5/10/06)
+                         if (pdbug) then
+                            print *,'CASE_1:_New_Tophat_in_a_single_bin'
+                            print *,'SO4_from_tophat=',(YUC+YLC)*.5e+0_fp*DN
+                         endif
+                         !<step5.3> Check mass conservation (win, 7/24/06)
+                         if(MAXVAL(moxd(:)).gt.0e+0_fp)then
+                            delt1 = (YUC+YLC)*.5e+0_fp*DN-AMKD(L,J)-madd(L)
+                            if( abs(delt1)/madd(L).gt.1e-6_fp .and. &
+                                 madd(L).gt.1e-4_fp)then
+                               ! Just print out this for debugging
+                               IF(.not.SPINUP(60.) .and. pdbug ) then
+                                  !write(116,*)'CASE1_mass_conserv_fix'
+                                  write(116,13) L, madd(L), delt1
+13                                FORMAT('CASE_1 Bin ',I2,' moxid ', &
+                                         E13.5,' delta ',E13.5 )
+                                  !errspot=.true. !just try temp (win, 7/30/07)
+                               ENDIF
+                               AMK(I,J) = AMK(I,J)-delt1 !fix the error
+                            endif
+                         endif
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ELSE
+                         !For non-condensing, migrate the mass to bin I
+                         AMK(I,J)=AMK(I,J)+DM
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         !<step5.2> Debug step-by-step (win, 5/10/06)
+                         if (pdbug) then
+                            !print *,' Migrating_mass(',j,')',DM   !use this debugging line if there are more than seasalt+so4
+                            print *,'Migrating_mass',DM
+                         endif
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ENDIF
+                   enddo
+                   !Add number of old bin to ANK (which is blank for the first loop of bin I)
+                   ANK(I)=ANK(I)+DN
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   !<step5.2> (win, 5/10/06)
+                   if(pdbug) print*,'Migrating_number',DN
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                ELSE
+                   ![3] upper bound of new tophat grow beyond the upper bound of bin I
+                   DN=ANKD(L)*(X(I+1)-YL)*DYI !DN= proportion of the number from tophat that still stays in the bin I
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   !<step5.2> (win, 5/10/06)
+                   if ( pdbug) then
+                      print*,'Case_2:_Tophat_cross_bin_boundary'
+                      print *,'Number_that_remain_in_low_bin',DN
+                   endif
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                   !<step5.3> For fixing mass conserv problem (win, 7/24/06)
+                   macc=0e+0_fp
+
+                   do j=1,ICOMPHARD
+                      !DM= proporation of the mass that is still in bin I
+                      DM=AMKD(L,J)*(X(I+1)-YL)*DYI
+                      IF (J.EQ.CSPECIES) THEN
+                         !XP= what would have grown to be X(I+1)
+                         XP=DMDT_INT(X(I+1),-1.0e+0_fp*TAU_L,WR(L))
+                         YM=XP*AMKD(L,J)/AMKDRY(L)+X(I+1)-XP
+                         !add the condensing mass to the existing sulfate of bin I
+                         AMK(I,J)=DN*(YM+YLC)*0.5e+0_fp+AMK(I,J)
+                         !<step5.3>Accumulating the condensing mass for error check (win, 7/24/06)
+                         macc = macc + DN*(YM+YLC)*0.5e+0_fp
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         !<step5.2> (win, 5/10/06)
+                         if(pdbug)then
+                            print *,'XP',XP,'YM',YM
+                            print *,'Cond_TophatLowEnd',DN*(YM+YLC)*0.5e+0_fp
+                         endif
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ELSE
+                         !Add DM to AMK (which is blank for the first loop of bin I)
+                         AMK(I,J)=AMK(I,J)+DM
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         if(pdbug) print*,'Other___in_low_end',DM
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ENDIF
+                   enddo
+                   ANK(I)=ANK(I)+DN ! Add DN number to ANK (which is blank for the first loop of bin I)
+                   ! Remapping loop from bin I+1 to bin30
+                   DO K=I+1,nBins
+                      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      if(pdbug) print *,'Spreading_to_bin',K
+                      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      IF(YU.LE.X(K+1))GOTO 100
+                      ![4] Found the bin where the high end of the tophat is in --> do the final loop
+
+                      ![5.1] This part for distributing to the bins in between
+                      !      the original and the furthest bin that growing occurs
+
+                      !Use width of bin K to proportionate number from old bin wrt. to the top hat (YU-YL)
+                      DN=ANKD(L)*(X(K+1)-X(K))*DYI
+
+                      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      if(pdbug) then
+                         print *,'Number_migrated',DN
+                      endif
+                      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      do j=1,ICOMPHARD
+                         !Proportion of old-bin mass that falls in this current bin K
+                         DM=AMKD(L,J)*(X(K+1)-X(K))*DYI
+                         IF (J.EQ.CSPECIES) THEN
+                            XP=DMDT_INT(X(K),-1.0e+0_fp*TAU_L,WR(L)) !what would have grown to be X(k)
+                            YM=XP*AMKD(L,J)/AMKDRY(L)+X(K)-XP !what would have grown to be X(k) but just for sulfate
+                            AMK(K,J)=DN*1.5e+0_fp*YM+AMK(K,J)    ! A factor of 1.5 is from averaging (YM+2*YM)
+                            !<step5.3> Accumulating condensing mass for error check (win, 7/24/06)
+                            macc = macc+DN*1.5e+0_fp*YM
+                            !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            !<step5.2> (win, 5/10/06)
+                            if(pdbug)then
+                               print *,'XP',XP,'YM',YM
+                               print *,'Cond_mass_spread',DN*1.5e+0_fp*YM
+                            endif
+                            !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         ELSE
+                            AMK(K,J)=AMK(K,J)+DM    !Add migrating mass of non-condensing species
+                            !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            if(pdbug) print*,'No-cond_mass_migrate',DM
+                            !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         ENDIF
+                      enddo
+                      ANK(K)=ANK(K)+DN  !Add migrating number to the exising number of bin K
+                   ENDDO
+                   !This STOP is for when there's excessive growth over bin30
+                   STOP 'Trying to put stuff in bin ibins+1'
+
+100                CONTINUE
+                   ![5.2] Final section that the tophat grows to.
+                   DN=ANKD(L)*(YU-X(K))*DYI
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   if(pdbug) then
+                      print *,'Found_right_edge_for_tophat'
+                      print *,'Number_migrated',DN
+                   endif
+                   !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   do j=1,ICOMPHARD
+                      DM=AMKD(L,J)*(YU-X(K))*DYI  ! proportion of old mass that gets to this furthest bin.
+                      IF (J.EQ.CSPECIES) THEN
+                         XP=DMDT_INT(X(K),-1.0e+0_fp*TAU_L,WR(L))   !what would have grown to be X(k)
+                         YM=XP*AMKD(L,J)/AMKDRY(L)+X(K)-XP !=XP for just sulfate
+                         AMK(K,J)=DN*(YUC+YM)*0.5e+0_fp+AMK(K,J) !add condensing mass to existing sulfate of bin K
+                         !<step5.3>Accumulating condensing mass for error check (win, 7/24/06)
+                         macc = macc+DN*(YUC+YM)*0.5e+0_fp
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         !<step5.2> (win, 5/10/06)
+                         if(pdbug)then
+                            print *,'XP',XP,'YM',YM
+                            print *,'Cond_mass_spread_final', &
+                                     DN*(YM+YUC)*0.5e+0_fp
+                         endif
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ELSE
+                         AMK(K,J)=AMK(K,J)+DM  !This adds the migrating mass to the exising mass of non-condensing species
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         if(pdbug) print*,'No-cond_mass_migrated',DM
+                         !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      ENDIF
+                   enddo
+                   ANK(K)=ANK(K)+DN   !This adds the migrating number to the existing number of bin K
+
+                   !<step5.3> Check mass conservation (win, 7/24/06)
+                   if(MAXVAL(moxd(:)).gt.0e+0_fp)then
+                      delt2 = 0e+0_fp
+                      delt2 = macc-AMKD(L,CSPECIES)-madd(L)
+                      if(abs(delt2)/ madd(L) > 1e-6)then
+                         if( madd(L) > 10.e+0_fp .and. &
+                             abs(delt2)/ madd(L) > 15e-2_fp ) then
+                            !print *,'TMCOND ERROR: mass condensation', &
+                            !  'discrep >15% during aqoxid or SOAcond'
+                            IF(.not.SPINUP(60.))  THEN
+14                             FORMAT('CASE_2 Bin',I2,' moxid',F7.1, &
+                                      ' delta',F7.1 )
+                               write(116,14) L, madd(L),delt2
+                               !write(116,*)'CASE_2_mass_not_conserve'
+                               !write(116,*)'For_bin',L,'moxid',madd(L) &
+                               !     ,'delta',delt2
+                            ENDIF
+                            errspot=.true. !just try temp (win, 7/30/07)
+                         endif !significant mass add (10 kg) - then print error.
+                         !<step5.3> Fix the problem of mass not conserved
+                         !in case of aqueous oxidation by find the missing mass
+                         !and spread them equally into the bins that the final
+                         !tophat has grown to. (win, 7/24/06)
+                         xtra  = 0e+0_fp
+                         dummy = 0e+0_fp
+                         do kk = I,K
+                            !AMK(kk,CSPECIES) = AMK(kk,CSPECIES)-delt2/(K-I+1)
+                            dummy = AMK(kk,CSPECIES) - &
+                                    ( delt2/(K-I+1) + xtra )
+                            if(dummy < 0.e+0_fp )then
+                               xtra = xtra + delt2/(K-I+1)
+                            else
+                               AMK(kk,CSPECIES) = dummy
+                               xtra = 0.e+0_fp
+                            endif
+                         enddo
+                      endif   !error>treshold
+                   endif      !moxd>0
+
+                ENDIF  !YU.LE.X(I+1)
+                GOTO 200
+             ELSE    !YL > X(I+1)
+                IF(I == nBins .and.(madd(L)/maddtot)> 1.5e-1_fp) THEN
+11                 FORMAT( 'Tophat>Xk(31) at bin ',I3,' loosing ', &
+                           E13.5,' kg = ',F5.1,'%')
+                   if(MAXVAL(moxd(:)) > 0e+0_fp) then
+                      print 11, L, madd(L),(madd(L)/maddtot)*1.e+2_fp
+                      !write(116,11) L, madd(L),(madd(L)/maddtot)*1.e+2_fp
+                      !write(117,*) madd(L)  !for accumulating mass loss
+                      !PRINT *,'Tophat > Xk(31): growth over bin30,Loss%'
+                      !if(moxd >0e+0_fp)print *,madd(L),(madd(L)/maddtot)*1.d2
+                      !errspot = .true.
+                   endif
+                ENDIF
+             ENDIF   !YL.LT.X(I+1)
+          ENDDO !I loop
+200       CONTINUE
+       ENDDO    !L loop
+    ENDIF
+
+    !Signal error out to so4cond so the run can stop in aerophys and show i,j,l (win, 4/12/06)
+    pdbug = errspot
+
+    RETURN
+
+  END SUBROUTINE TMCOND
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: gasdiff
+!
+! !DESCRIPTION: Function GASDIFF returns the diffusion constant of a species in
+!  air (m2/s). It uses the method of Fuller, Schettler, and Giddings as
+!  described in Perry's Handbook for Chemical Engineers.
+!  WRITTEN BY Peter Adams, May 2000
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION GASDIFF( TEMP, PRES, MW, SV ) RESULT( VALUE )
+!
+! !INPUT PARAMETERS:
+!
+    real(fp) temp, pres  !temperature (K) and pressure (Pa) of air
+    real(fp) mw          !molecular weight (g/mol) of diffusing species
+    real(fp) Sv          !sum of atomic diffusion volumes of diffusing species
+!
+! !RETURN VALUE:
+!
+    real(fp) VALUE
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    real(fp) mwair, Svair   !same as above, but for air
+    real(fp) mwf, Svf
+    parameter(mwair=28.9, Svair=20.1)
+
+    !========================================================================
+    ! GASDIFF begins here!
+    !========================================================================
+
+    mwf=sqrt((mw+mwair)/(mw*mwair))
+    Svf=(Sv**(1./3.)+Svair**(1./3.))**2.
+    VALUE =1.0e-7*temp**1.75*mwf/pres*1.0e5/Svf
+
+  END FUNCTION GASDIFF
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: aerodens
+!
+! !DESCRIPTION: Function AERODENS calculates the density (kg/m3) of a sulfate-
+!  nitrate-ammonium-nacl-OC-EC-dust-water mixture.  Inorganic mass (sulfate-
+!  nitrate-ammonium-nacl-water) is assumed to be internally mixed.  Then the
+!  density of inorg and EC, OC, and dust is combined weighted by mass.
+!  WRITTEN BY Peter Adams, May 1999 in GISS GCM-II' and extened to include
+!  carbonaceous aerosol in Jan, 2002.
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION AERODENS( MSO4, MNO3, MNH4, MNACL, MECIL, MECOB, MOCIL, &
+                     MOCOB, MDUST, MH2O )  RESULT( VALUE )
+!
+! !INPUT PARAMETERS:
+!
+    REAL(fp),  INTENT(IN)  ::  MSO4, MNO3, MNH4, MNACL, MH2O
+    REAL(fp),  INTENT(IN)  ::  MECIL, MECOB, MOCIL, MOCOB, MDUST
+!
+! !RETURN VALUE:
+!
+    REAL(fp)                  :: VALUE
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    real(fp)                  :: IDENSITY, DEC, DOC, DDUST, MTOT
+    parameter(dec=2200., doc=1400., ddust=2650.)
+
+    !=================================================================
+    ! AERODENS begins here!
+    !=================================================================
+
+    IDENSITY = INODENS( MSO4, MNO3, MNH4, MNACL, MH2O )
+    MTOT = MSO4+MNO3+MNH4+MNACL+MH2O+MECIL+MECOB+MOCIL+MDUST+MOCOB
+    IF ( MTOT > 0.e+0_fp ) THEN
+       VALUE = ( IDENSITY*(MSO4+MNO3+MNH4+MNACL+MH2O) + &
+                 DEC*(MECIL+MECOB) + DOC*(MOCIL+MOCOB)+ &
+                 DDUST*MDUST                            )/MTOT
+    ELSE
+       VALUE = 1400.
+    ENDIF
+
+  END FUNCTION AERODENS
+!EOC
+  !------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: inodens
+!
+! !DESCRIPTION: Function INODENS calculates the density (kg/m3) of a sulfate-
+!  nitrate-ammonium-nacl-water mixture that is assumed to be internally mixed.
+!  WRITTEN BY Peter Adams, May 1999 in GISS GCM-II'
+!  Introduced to GEOS-CHEM by Win Trivitayanurak (win@cmu.edu) 8/6/07 first
+!  as AERODENS, then change to INODENS on 9/3/07
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION INODENS( MSO4_, MNO3_, MNH4_, MNACL_, MH2O_ ) &
+       RESULT( VALUE )
+!
+! !INPUT PARAMETERS:
+!
+    ! mso4, mno3, mnh4, mh2o, mnacl - These are the masses of each aerosol
+    ! component.  Since the density is an intensive property,
+    ! these may be input in a variety of units (ug/m3, mass/cell, etc.).
+    REAL(fp),  INTENT(IN)  ::  MSO4_, MNO3_, MNH4_, MNACL_, MH2O_
+!
+! !RETURN VALUE:
+!
+    REAL(fp)               :: VALUE
+!
+! !REMARKS:
+! ----Literature cited----
+!     I. N. Tang and H. R. Munkelwitz, Water activities, densities, and
+!       refractive indices of aqueous sulfates and sodium nitrate droplets
+!       of atmospheric importance, JGR, 99, 18,801-18,808, 1994
+!     Ignatius N. Tang, Chemical and size effects of hygroscopic aerosols
+!       on light scattering coefficients, JGR, 101, 19,245-19,250, 1996
+!     Ignatius N. Tang, Thermodynamic and optical properties of mixed-salt
+!       aerosols of atmospheric importance, JGR, 102, 1883-1893, 1997
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    real(fp) MSO4, MNO3, MNH4, MNACL, MH2O
+    !real(fp) so4temp, no3temp, nh4temp, nacltemp, h2otemp
+    real(fp) mwso4, mwno3, mwnh4, mwnacl, mwh2o            !molecular weights
+    real(fp) ntot, mtot                          !total number of moles, mass
+    real(fp) nso4, nno3, nnh4, nnacl, nh2o       !moles of each species
+    real(fp) xso4, xno3, xnh4, xnacl, xh2o       !mole fractions
+    real(fp) rso4, rno3, rnh4, rnacl, rh2o       !partial molar refractions
+    real(fp) ran, rs0, rs1, rs15, rs2       !same, but for solute species
+    real(fp) asr                            !ammonium/sulfate molar ratio
+    real(fp) nan, ns0, ns1, ns15, ns2, nss  !moles of dry solutes (nss = sea salt)
+    real(fp) xan, xs0, xs1, xs15, xs2, xss  !mass % of dry solutes - Tang (1997) eq. 10
+    real(fp) dan, ds0, ds1, ds15, ds2, dss  !binary solution densities - Tang (1997) eq. 10
+    real(fp) mwan, mws0, mws1, mws15, mws2  !molecular weights
+    real(fp) yan, ys0, ys1, ys15, ys2, yss  !mole fractions of dry solutes
+    real(fp) yh2o
+    real(fp) d                              !mixture density
+    real(fp) xtot
+
+    ! In the lines above, "an" refers to ammonium nitrate, "s0" to
+    ! sulfuric acid, "s1" to ammonium bisulfate, and "s2" to ammonium sulfate.
+    ! "nacl" or "ss" is sea salt.
+    parameter(mwso4=96.e+0_fp, &
+              mwno3=62.e+0_fp, &
+              mwnh4=18.e+0_fp, &
+              mwh2o=18.e+0_fp, &
+              mwnacl=58.45e+0_fp)
+    parameter(mwan=mwnh4+mwno3,          &
+              mws0=mwso4+2.e+0_fp,       &
+              mws1=mwso4+1.e+0_fp+mwnh4, &
+              mws2=2.e+0_fp*mwnh4+mwso4)
+
+    !=================================================================
+    ! INODENS begins here!
+    !=================================================================
+
+    ! Pass initial component masses to local variables
+    mso4=mso4_
+    mno3=mno3_
+    mnh4=mnh4_
+    mnacl=mnacl_
+    mh2o=mh2o_
+
+    !so4temp=mso4
+    !no3temp=mno3
+    !nh4temp=mnh4
+    !h2otemp=mh2o
+    !nacltemp=mnacl
+
+    ! [Pengfei Liu, avoid equality test with floating-point real numbers
+    !<step4.7> if the aerosol mass is zero - then just return the
+    !typical density = 1500 kg/m3 (win, 1/4/06)
+    !if (mso4 .eq. 0.e+0_fp .and. mno3 .eq.0.e+0_fp &
+    !    .and. mnh4.eq.0.e+0_fp .and. mnacl .eq. 0.e+0_fp ) then
+    !   VALUE = 1500.e+0_fp !kg/m3
+    !   goto 10
+    !endif
+    if ((mso4+mno3+mnh4+mnacl) .gt. 0.e+0_fp) then
+       CONTINUE
+    else
+       VALUE = 1500.e+0_fp !kg/m3
+       RETURN
+    endif
+    ! Pengfei Liu, 2018/02/07]
+
+    ! Calculate mole fractions
+    mtot  = mso4+mno3+mnh4+mnacl+mh2o
+    nso4  = mso4/mwso4
+    nno3  = mno3/mwno3
+    nnh4  = mnh4/mwnh4
+    nnacl = mnacl/mwnacl
+    nh2o  = mh2o/mwh2o
+    ntot  = nso4+nno3+nnh4+nnacl+nh2o
+    xso4  = nso4/ntot
+    xno3  = nno3/ntot
+    xnh4  = nnh4/ntot
+    xnacl = nnacl/ntot
+    xh2o  = nh2o/ntot
+
+    ! If there are more moles of nitrate than ammonium, treat unneutralized
+    ! HNO3 as H2SO4
+    if (nno3 .gt. nnh4) then
+       !make the switch
+       nso4=nso4+(nno3-nnh4)
+       nno3=nnh4
+       mso4=nso4*mwso4
+       mno3=nno3*mwno3
+
+       !recalculate quantities
+       mtot = mso4+mno3+mnh4+mnacl+mh2o
+       nso4 = mso4/mwso4
+       nno3 = mno3/mwno3
+       nnh4 = mnh4/mwnh4
+       nnacl = mnacl/mwnacl
+       nh2o = mh2o/mwh2o
+       ntot = nso4+nno3+nnh4+nnacl+nh2o
+       xso4 = nso4/ntot
+       xno3 = nno3/ntot
+       xnh4 = nnh4/ntot
+       xnacl = nnacl/ntot
+       xh2o = nh2o/ntot
+
+    endif
+
+    ! Calculate the mixture density
+    ! Assume that nitrate exists as ammonium nitrate and that other ammonium
+    ! contributes to neutralizing sulfate
+    nan=nno3
+    if (nnh4 .gt. nno3) then
+       !extra ammonium
+       asr=(nnh4-nno3)/nso4
+    else
+       !less ammonium than nitrate - all sulfate is sulfuric acid
+       asr=0.e+0_fp
+    endif
+    if (asr .ge. 2.e+0_fp) asr=2.e+0_fp
+    if (asr .ge. 1.e+0_fp) then
+       !assume NH4HSO4 and (NH4)2(SO4) mixture
+       !NH4HSO4
+       ns1=nso4*(2.e+0_fp-asr)
+       !(NH4)2SO4
+       ns2=nso4*(asr-1.e+0_fp)
+       ns0=0.e+0_fp
+    else
+       !assume H2SO4 and NH4HSO4 mixture
+       !NH4HSO4
+       ns1=nso4*asr
+       !H2SO4
+       ns0=nso4*(1.e+0_fp-asr)
+       ns2=0.e+0_fp
+    endif
+
+    !Calculate weight percent of solutes
+    xan=nan*mwan/mtot*100.e+0_fp
+    xs0=ns0*mws0/mtot*100.e+0_fp
+    xs1=ns1*mws1/mtot*100.e+0_fp
+    xs2=ns2*mws2/mtot*100.e+0_fp
+    xnacl=nnacl*mwnacl/mtot*100.e+0_fp
+    xtot=xan+xs0+xs1+xs2+xnacl
+
+    ! [Pengfei Liu, fix the polynomial issue
+    !Calculate binary mixture densities (Tang, eqn 9)
+    !dan=0.9971e+0_fp +4.05e-3_fp*xtot +9.0e-6_fp*xtot**2.e+0_fp
+    !ds0=0.9971e+0_fp +7.367e-3_fp*xtot -4.934d-5*xtot**2.e+0_fp &
+    !     +1.754e-6_fp*xtot**3.e+0_fp - 1.104d-8*xtot**4.e+0_fp
+    !ds1=0.9971e+0_fp +5.87e-3_fp*xtot -1.89e-6_fp*xtot**2.e+0_fp &
+    !     +1.763e-7_fp*xtot**3.e+0_fp
+    !ds2=0.9971e+0_fp +5.92e-3_fp*xtot -5.036e-6_fp*xtot**2.e+0_fp &
+    !     +1.024d-8*xtot**3.e+0_fp
+    !dss=0.9971e+0_fp +7.41e-3_fp*xtot -3.741d-5*xtot**2.e+0_fp &
+    !     +2.252e-6_fp*xtot**3.e+0_fp   -2.06d-8*xtot**4.e+0_fp
+    dan=0.9971e+0_fp + xtot * (4.05e-3_fp + 9.0e-6_fp * xtot)
+    ds0=0.9971e+0_fp &
+        +xtot*(7.367e-3_fp &
+        +xtot*(-4.934d-5 &
+        +xtot*(1.754e-6_fp &
+        +xtot*(-1.104d-8  ))))
+    ds1=0.9971e+0_fp &
+        +xtot*(5.87e-3_fp &
+        +xtot*(-1.89e-6_fp &
+        +xtot*(1.763e-7_fp )))
+    ds2=0.9971e+0_fp &
+        +xtot*(5.92e-3_fp &
+        +xtot*(-5.036e-6_fp &
+        +xtot*(1.024d-8    )))
+    dss=0.9971e+0_fp &
+        +xtot*(7.41e-3_fp &
+        +xtot*(-3.741d-5 &
+        +xtot*(2.252e-6_fp &
+        +xtot*(-2.06d-8     ))))
+    ! Pengfei Liu, 2018/02/07]
+
+    !Convert x's (weight percent of solutes) to fraction of dry solute (scale to 1)
+    xtot=xan+xs0+xs1+xs2+xnacl
+    xan=xan/xtot
+    xs0=xs0/xtot
+    xs1=xs1/xtot
+    xs2=xs2/xtot
+    xnacl=xnacl/xtot
+
+    !Calculate mixture density
+    d=1.e+0_fp/(xan/dan+xs0/ds0+xs1/ds1+xs2/ds2+xnacl/dss)  !Tang, eq. 10
+
+    if ((d .gt. 2.e+0_fp) .or. (d .lt. 0.997e+0_fp)) then
+       write(*,*) 'ERROR in aerodens'
+       write(*,*) mso4,mno3,mnh4,mnacl,mh2o
+       print *, 'xtot',xtot
+       print *, 'xs1',xs1, 'ns1',ns1,'mtot',mtot,'asr',asr
+       write(*,*) 'density(g/cm3)',d
+       STOP
+    endif
+
+    ! Restore masses passed
+    !mso4=so4temp
+    !mno3=no3temp
+    !mnh4=nh4temp
+    !mnacl=nacltemp
+    !mh2o=h2otemp
+
+    ! Return the density
+    VALUE = 1000.e+0_fp*d    !Convert g/cm3 to kg/m3
+
+    !<step4.7> negative value check (win, 1/4/06)
+    if ( VALUE < 0e+0_fp ) then
+       print *, 'ERROR :: aerodens - negative', VALUE
+       STOP
+    endif
+
+10  CONTINUE
+
+  END FUNCTION INODENS
+!EOC
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: dmdt_int
+!
+! !DESCRIPTION: Function DMDT_INT apply the analytic solution to the droplet
+!  growth equation in mass space for a given scale length which mimics the
+!  inclusion of gas kinetic effects. (win, 7/23/07)
+!  Originally written by Peter Adams
+!  Modified for GEOS-CHEM by Win Trivitayanurak (win@cmu.edu)
+!\\
+!\\
+! !INTERFACE:
+!
+  FUNCTION DMDT_INT ( M0, TAU, WR ) RESULT( VALUE )
+!
+! !INPUT PARAMETERS:
+!
+    ! M0  initial mass
+    ! L0  length scale
+    ! Tau forcing from vapor field
+    REAL(fp),   INTENT(IN)  ::  M0,  TAU,  WR
+!
+! !RETURN VALUE:
+!
+    REAL(fp)                :: VALUE
+!
+! !REMARKS:
+!  Original note from Peter Adams:
+!  I have changed the length scale.  Non-continuum effects are
+!  assumed to be taken into account in choice of tau (in so4cond subroutine).
+!  .
+!  I have also added another argument to the function call, WR.  This
+!  is the ratio of wet mass to dry mass of the particle.  I use this
+!  information to calculate the amount of growth of the wet particle,
+!  but then return the resulting dry mass.  This is the appropriate
+!  way to implement the condensation algorithm in a moving sectional
+!  framework.
+!  .
+!  Reference: Stevens et al. 1996, Elements of the Microphysical Structure
+!           of Numerically Simulated Nonprecipitating Stratocumulus,
+!           J. Atmos. Sci., 53(7),980-1006.
+! This calculates a solution for m(t+dt) using eqn.(A3) from the reference
+!
+! !REVISION HISTORY:
+!  See https://github.com/geoschem/geos-chem for complete history
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+    REAL(fp)                ::  X,  L0,  C,  ZERO,  MH2O
+    PARAMETER (C=2.e+0_fp/3.e+0_fp,L0=0.0e+0_fp,ZERO=0.0e+0_fp)
+
+    !=================================================================
+    ! DMDT_INT begins here!
+    !=================================================================
+
+    MH2O = ( WR - 1.e+0_fp ) * M0
+    X = ( ( M0 + MH2O ) ** C + L0 )
+    X = MAX( ZERO, SQRT(MAX(ZERO,C*TAU+X))-L0 )
+
+    !<step5.3> Do aqueous oxidation dry - so no need to select process (win, 7/14/06)
+    !<step5.3> For so4cond condensation, use constant water amount.
+    ! For aqueous oxidation, use constant wet ratio. (win, 7/13/06)
+    !prior to 10/2/08
+    !VALUE = X * X * X - MH2O
+    !!DMDT_INT = X*X*X/WR    !<step5.2> change calculation to keep WR constant after condensation/evap (win, 5/14/06)
+
+    !<step6.3> bring back the previously reverted back (win, 10/2/08)
+    VALUE = X*X*X/WR
+    !pja Perform some numerical checks on dmdt_int
+    IF ((TAU > 0.0) .and. (VALUE < M0)) VALUE = M0
+    IF ((TAU < 0.0) .and. (VALUE > M0)) VALUE = M0
+
+  END FUNCTION DMDT_INT
+!EOC
 END MODULE Lagrange_singlebox_Mod
