@@ -828,6 +828,9 @@ PROGRAM GEOS_Chem
   !WRITE(6,'(a)') 'debug in main: during initialization, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
   !CALL lagrange_init(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
   CALL lagrange_init_box (am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
+#ifdef TOMAS
+  CALL lagrange_init_box_tomas (am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
+#endif
   ! convert back from molec/cm3 to kg/kg dry
   !CALL Convert_Spc_Units(                                            &
   !             Input_Opt  = Input_Opt,                                       &
@@ -1632,12 +1635,12 @@ PROGRAM GEOS_Chem
           IF ( ITS_TIME_FOR_CHEM() ) THEN 
              ! Do GEOS-Chem chemistry
              !WRITE(6,'(a)') 'before do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
-             WRITE(6,'(a)') 'Debug: (BZ): Main: Before Do_Chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+             !WRITE(6,'(a)') 'Debug: (BZ): Main: Before Do_Chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
              !Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : rate constant for RXN 202 = ", &
              !           State_Diag%RxnConst(23, 40, 39 ,202)
              CALL Do_Chemistry( Input_Opt,  State_Chm, State_Diag, &
                                 State_Grid, State_Met, RC )
-             WRITE(6,'(a)') 'Debug: (BZ): After do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+             !WRITE(6,'(a)') 'Debug: (BZ): After do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
              !Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : rate constant for RXN 202 = ", &
              !            State_Diag%RxnConst(23, 40, 39 ,202)
     

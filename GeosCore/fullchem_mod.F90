@@ -527,8 +527,8 @@ CONTAINS
        ENDIF
     ENDIF
 #endif
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
-    WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
+    !WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O; rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_1,23,40)
+    !WRITE(6,*) 'Debug (BZ): Do_Chemistry  (before main loop): PhotoRxn: O3 + hv -> O2 + O(1D); rate: ', State_Chm%Phot%ZPJ(39,RXN_O3_2,23,40)
     ! Debug: BZ
     !Flag_Prev = State_Diag%Archive_RxnConst
     !State_Diag%Archive_RxnConst = .True.

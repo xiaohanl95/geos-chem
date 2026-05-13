@@ -9562,7 +9562,7 @@ CONTAINS
     TIMEBEGIN = GET_TAUb()  ! Begin time of this run (hrs)
     TIMEINIT  = 141000. !2/1/2001    ! Start time for spin-up (hrs)
     HOURS = DAYS * 24.0     ! Period allow error to pass (hrs)
-
+    ! Write (6, *) 'debug (BZ): In spinup(Main), TIMENOW= ', TIMENOW, ' TIMEBEGIN = ', TIMEBEGIN
     ! Criteria to let error go or to terminate the run
     !IF ( TIMENOW > MIN( TIMEBEGIN, TIMEINIT ) + HOURS  ) THEN
     IF ( TIMENOW > TIMEBEGIN + HOURS  ) THEN

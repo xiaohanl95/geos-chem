@@ -17,8 +17,8 @@ MODULE Plume_list_mod
     REAL(fp) :: LENGTH = MISSING, ALPHA = MISSING
     REAL(fp) :: LIFE = MISSING
     REAL(fp) :: PDX = MISSING, PDY = MISSING
-    REAL(fp), DIMENSION(:,:,:), POINTER :: CONCNT2d => NULL() ! [n_x_max, n_y_max, n_species]
-    REAL(fp), DIMENSION(:), POINTER :: MassRef2d => NULL() ! [n_species]
+    REAL(fp), DIMENSION(:,:,:), ALLOCATABLE :: CONCNT2d  ! [n_x_max, n_y_max, n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE :: MassRef2d  ! [n_species]
 
     TYPE(Plume2d_list), POINTER :: next => NULL()
   END TYPE
@@ -35,8 +35,8 @@ MODULE Plume_list_mod
     REAL(fp) :: LENGTH = MISSING, ALPHA = MISSING
     REAL(fp) :: LIFE = MISSING
     REAL(fp) :: RA = MISSING, RB = MISSING, THETA = MISSING
-    REAL(fp), DIMENSION(:,:), POINTER :: CONCNT1d => NULL() ! [n_slab_max,n_species]
-    REAL(fp), DIMENSION(:), POINTER :: MassRef1d => NULL() ! [n_species]
+    REAL(fp), DIMENSION(:,:), ALLOCATABLE :: CONCNT1d ! [n_slab_max,n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE :: MassRef1d  ! [n_species]
 
     TYPE(Plume1d_list), POINTER :: next => NULL()
   END TYPE
