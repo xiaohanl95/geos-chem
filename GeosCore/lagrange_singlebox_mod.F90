@@ -144,6 +144,8 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp), ALLOCATABLE :: SpcConc_BEFORE_KPP(:,:,:,:)
   REAL(fp), ALLOCATABLE :: SpcConc_AFTER_KPP(:,:,:,:)
   
+  CHARACTER(LEN=16), ALLOCATABLE     :: spc_names_p_use(:) ! species used in plume-TOMAS model
+  
   ! Variable to track sulfate mass (in molec S)
   ! _inj: injected
   ! _r1: release in entrainment/detrainment (check release in chem?) 
@@ -582,9 +584,11 @@ CONTAINS
     TYPE(GrdState), INTENT(IN)            :: State_Grid  ! Grid State objectgg
     INTEGER,        INTENT(OUT)           :: RC         ! Success or failure
     
-    INTEGER                               :: iBin
+    INTEGER                               :: iBin, i_species
 
     REAL(fp)                              :: Mo
+    
+    CHARACTER(LEN = 16)                   :: first_tracer, this_tracer
 
     nBins              =              State_Chm%nTomasBins
     nspc_p             =              10 + nspc_p_tomas_tracer * nBins
@@ -598,6 +602,7 @@ CONTAINS
     ALLOCATE( AVGMASS( nBins ), STAT=RC )
     IF ( RC /= 0 ) CALL ALLOC_ERR( 'AVGMASS [TOMAS] in plume' )
     AVGMASS(:) = 0e+0_fp
+
 #if defined(TOMAS40)
     Mo = 1.0e-21_fp*2.e+0_fp**(-10)
 #elif defined(TOMAS15)
@@ -619,11 +624,33 @@ CONTAINS
        Xk( ibin ) = Mo * 2.e+0_fp ** ( ibin-1 )
     ENDDO
 #endif
+
 #ifdef TOMAS
     DO ibin = 1, nBins
        AVGMASS( ibin ) = sqrt(Xk(ibin)*Xk(ibin+1))
     ENDDO
 #endif
+    ! create species name database for TOMAS
+    ALLOCATE( spc_names_p_use(nspc_p), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'spc_names_p_use in plume' )
+    spc_names_p_use(1:10)=spc_names_p(1:10)
+    
+     DO i_species = 1, nspc_p_tomas_tracer
+
+         first_tracer = TRIM(spc_names_p(10+i_species))
+         
+         DO ibin = 1, nBins
+         write(this_tracer, '(A, I2.2)') TRIM(first_tracer(1:LEN_TRIM(first_tracer)-2)), ibin
+         spc_names_p_use(10+i_species+(ibin-1)*nspc_p_tomas_tracer) = &
+                  TRIM(this_tracer)
+         
+      ENDDO
+    ENDDO
+    ! Dubug printout
+    Write (6,*) "Debug (BZ): Plume-TOMAS species database:"
+    DO i_species = 1, nspc_p
+       Write (6,*) "Species in Plume: Number", i_species, "; Name: ", TRIM(spc_names_p_use(i_species))
+    ENDDO 
 
     ! Creat file for TOMAS tracer diag
     File_SF_bin_IU = findFreeLun()
@@ -1198,8 +1225,9 @@ CONTAINS
   real(fp)               :: wind_s_shear, Ptemp_shear
   real(fp)               :: Cv, Ch, Omega_N, N_BV
   real(fp)               :: eddy_v, eddy_h 
-  real(fp)               :: CFL
-  real(fp)               :: Pc_middle, Pc_bottom, Pc_top, Pc_left, Pc_right
+  real(fp)               :: CFL, CFL_adv, CFL_dif_h, CFL_dif_v, max_u
+  real(fp)               :: Pc_middle, Pc_bottom, Pc_top, Pc_left, Pc_right, Pc_update
+  real(fp)               :: mass_before_clip, mass_after_clip
   real(fp)               :: background_conc
   real(fp)               :: mass_plume, mass_plume_new, D_mass_plume, mass_plume_scale
   real(fp)               :: background_mass, background_mass_new
@@ -1672,7 +1700,7 @@ CONTAINS
     ! combine 9 grids into 1 grids. 
     ! Update: box_concnt_2D(), Pdx(), Pdy(),  Extra_mass_2D()
     ! (BZ): The logic here need to be clarified, temporiraly disable
-    ! Resize and throw an error when not meet CFL condition
+    ! resize and throw an error when not meet CFL condition
     !--------------------------------------------------------------
     IF(Pdx<=0.5*Dx_init) THEN
       errMsg = 'Size are too small to meet the CFL condition! '
@@ -1719,7 +1747,7 @@ CONTAINS
        !V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp
 
 
-        DO i_species= 1, MIN(nspc_p, 8), 1
+        DO i_species= 1, nspc_p!MIN(nspc_p, 8), 1
           
           ! Massref_species=Plume2d_curr%MassRef2d(i_species)
 #ifdef TOMAS
@@ -1748,21 +1776,30 @@ CONTAINS
          ENDIF
 #endif
           Nt = CEILING(Dt/120)
-          Pdt = Dt/Nt ! Dt=600 ! FLOOR(Pdx/Pu(1,1)/10)*10
+          Pdt = Dt/REAL(Nt, fp) ! Dt=600 ! FLOOR(Pdx/Pu(1,1)/10)*10
 
           ! Find the best Pdt to meet CFL condition:
- 700    CONTINUE
+ !700    CONTINUE
+         !CFL = Pdt*Pu(1,1)/Pdx
+       !IF(MAX( ABS(CFL), ABS(2*eddy_h*Pdt/(Pdx**2)), &
+       !                  ABS(2*eddy_v*Pdt/(Pdy**2)) ) > 0.8)THEN
 
+          !Nt = Nt+1
+          !Pdt = Dt/Nt
+          !GOTO 700
 
-          CFL = Pdt*Pu(1,1)/Pdx
-          IF(MAX( ABS(CFL), ABS(2*eddy_h*Pdt/(Pdx**2)), &
-                            ABS(2*eddy_v*Pdt/(Pdy**2)) ) > 0.8)THEN
+        !ENDIF
+          Do 
+            max_u = MAXVAL( ABS(Pu(2:n_x_max2-1,2:n_y_max2-1)) )
+            CFL_adv = max_u * Pdt / Pdx
+            CFL_dif_h = eddy_h * Pdt / Pdx**2
+            CFL_dif_v = eddy_v * Pdt / Pdx**2
+            IF (MAX(CFL_adv, 2.0_fp*(CFL_dif_h+CFL_dif_v))<=0.8_fp) EXIT
 
             Nt = Nt+1
             Pdt = Dt/Nt
-            GOTO 700
-
-          ENDIF
+          ENDDO
+            
 
           !Concnt2D_bdy(:,:) = 0.0 
           ! Maybe fill the unused outer cells with background concentration
@@ -1770,15 +1807,14 @@ CONTAINS
           ! C2d_bg(:,:)  = 0.0_fp
           C2d_bg(2:n_x_max2-1,2:n_y_max2-1) =C2d_prev(1:n_x_max,1:n_y_max)
           C2d_new (:,:) = C2d_bg (:,:)
-        
-          IF( abs(Dt/Pdt-Nt) > 0.00001 ) THEN
-            WRITE(6,*) "*** ERROR: Check Pdt ***"
-            WRITE(6,*) Pdt, Nt, Dt
-            WRITE(6,*) Pdx/Pu(1,1), Pdy**2/(2*eddy_v), Pdx**2/(2*eddy_h)
-          ENDIF
+          !IF( abs(Dt/Pdt-Nt) > 0.00001 ) THEN
+          !  WRITE(6,*) "*** ERROR: Check Pdt ***"
+          !  WRITE(6,*) Pdt, Nt, Dt
+          !  WRITE(6,*) Pdx/Pu(1,1), Pdy**2/(2*eddy_v), Pdx**2/(2*eddy_h)
+          !ENDIF
        
 
-          DO t1s = 1, NINT(Dt/Pdt)
+          DO t1s = 1, Nt !NINT(Dt/Pdt)
 
             ! advection ----------------------------------------------------
             ! diffusion ----------------------------------------------------
@@ -1792,7 +1828,7 @@ CONTAINS
 
             !$OMP PARALLEL DO           &
             !$OMP DEFAULT( SHARED     ) &
-            !$OMP PRIVATE(i_y,i_x,CFL,Pc_middle,Pc_top,Pc_bottom,Pc_right,Pc_left)
+            !$OMP PRIVATE(i_y,i_x,CFL,Pc_middle,Pc_top,Pc_bottom,Pc_right,Pc_left, Pc_update)
             DO i_y = 2, n_y_mid2, 1
             DO i_x = 2, n_x_max2-1, 1
               Pc_middle = C2d_bg( i_x,   i_y  )
@@ -1802,20 +1838,27 @@ CONTAINS
               Pc_left   = C2d_bg( i_x-1, i_y  )
            
               CFL       = Pdt*Pu(i_x,i_y)/Pdx
-
-              C2d_new(i_x, i_y) = Pc_middle           &
+              Pc_update = Pc_middle           &
                 - 0.5 * CFL    * ( Pc_right - Pc_left )   &
                 + 0.5 * CFL**2 * ( Pc_right - 2*Pc_middle + Pc_left )         &
                 + Pdt*( eddy_h*( Pc_right -2*Pc_middle +Pc_left   ) /(Pdx**2) &
                        +eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
+              C2d_new(i_x, i_y) = Pc_update
               ! update the other half based on vertical symmetry 
               C2d_new(i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y) 
 
             ENDDO
             ENDDO
             !$OMP END PARALLEL DO
-
+            mass_before_clip = SUM(C2d_new)
+            C2d_new = MAX(C2d_new, 0.0_fp)
+            mass_after_clip = SUM(C2d_new)
+            WRITE(6,*) 'Debug (BZ): adv & diff: Plume id= ', box_label, &
+                                    'Species id= ', i_species, &
+                                    'mass_before_clip= ', mass_before_clip, &
+                                    'mass_after_clip= ', mass_after_clip
           ENDDO ! DO t1s = 1, NINT(Dt/Pdt)
+          
           
          !================================================================
          ! Calculate the mass exchange of plume to background cell
