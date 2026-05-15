@@ -875,7 +875,10 @@ CONTAINS
                 ! Read all bulk tracer and TOMAS tracer 01
                 DO i_species = 1, 10 + nspc_p_tomas_tracer
                   !write(6,*) 'debug (BZ): i_species', i_species
-                  spc_name = spc_names_p(i_species)
+                  spc_name = TRIM(spc_names_p(i_species))
+                  ! Skip initializing these species:   
+                  IF ((spc_name == 'PH2SO4').or. (spc_name == 'NH3') .or. &
+                                 (spc_name == 'NH4') .or. (spc_name =='AW01')) CYCLE
                   !write(6,*) 'debug (BZ): spc_name in plume', TRIM(spc_name)
                   id_tracer   = Ind_(TRIM(spc_name))
                   !write(6,*) 'debug (BZ): species id in GEOS-Chem ', id_tracer
@@ -886,7 +889,8 @@ CONTAINS
                 ! Read TOMAS tracer 02, 03, ... nbins
                 ! In GEOS-Chem the order is tracer1_01, tracer2_02,tracer3_03
                 ! in plume model the order is designed to be tracer1_01, tracer2_01, ... , tracer1_02, tracer2_02...
-                DO i_species = 1, nspc_p_tomas_tracer
+                ! Skip initializing AW
+                DO i_species = 1, nspc_p_tomas_tracer -1 
                   ! The first tracer of the same species
                   spc_name = spc_names_p(10 + i_species)
                   DO ibin = 2, nBins
@@ -1227,6 +1231,7 @@ CONTAINS
   real(fp)               :: eddy_v, eddy_h 
   real(fp)               :: CFL, CFL_adv, CFL_dif_h, CFL_dif_v, max_u
   real(fp)               :: Pc_middle, Pc_bottom, Pc_top, Pc_left, Pc_right, Pc_update
+  REAL(fp)               :: TOMAS_Scale
   real(fp)               :: mass_before_clip, mass_after_clip
   real(fp)               :: background_conc
   real(fp)               :: mass_plume, mass_plume_new, D_mass_plume, mass_plume_scale
@@ -1350,6 +1355,7 @@ CONTAINS
     !write(6,*) 'debug (BZ): SO2conc Euleria Grid: ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
     !write(6,*) 'debug (BZ): SO4conc Euleria Grid: ', Spc(id_SO4)%Conc(i_lon,i_lat,i_lev)
 #ifdef TOMAS
+   Write (6, *) 'Debug: BZ:  before physics, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
    Write (6, *) 'Debug: BZ: before physics, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
    Write (6, *) 'Debug: BZ: before physics Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
 #endif
@@ -1742,39 +1748,49 @@ CONTAINS
 !
 !    ENDIF ! IF(Pdx(i_box)<0.5*Dx_init)THEN
     !-------------------------------------------------------------------
-       ! Calculate the advection-diffusion in 2D grids
-       !-------------------------------------------------------------------
+    ! Calculate the advection-diffusion in 2D grids
+    !   - Consider flux-limited / positive conservative scheme to enforce 
+    !     donor-cell mass constraints and prevent negative concentrations.
+    !     require multiple additional loops, substantially higher computational cost
+    !
+    !   - Cuurently update SF and NK tracer based on bulk sulfate dilution
+    !   - This assume advection/diffusion changes total sulfate but does not directly
+    !     modify the sulfate size distribution; size redistribution is handled later
+    !     by TOMAS microphysics.
+    !-------------------------------------------------------------------
        !V_grid_2D       = Pdx*Pdy*box_length*1.0e+6_fp
 
 
-        DO i_species= 1, nspc_p!MIN(nspc_p, 8), 1
-          
+        DO i_species= 1, MIN(nspc_p, 10), 1
+          ! Skip physics of these species, and update TOMAS tracer separately
+          IF ((spc_name == 'PH2SO4').or. (spc_name == 'NH3') .or. &
+                        (spc_name == 'NH4') .or. (spc_name =='AW01')) CYCLE
           ! Massref_species=Plume2d_curr%MassRef2d(i_species)
-#ifdef TOMAS
-            IF(i_species .le. 10 + nspc_p_tomas_tracer) THEN
-               spc_name = TRIM(spc_names_p(i_species))
-               ind_spc_GC = Ind_(TRIM(spc_name))
-            ELSE
-               this_bin = CEILING( REAL(i_species - 10)/ nspc_p_tomas_tracer)
-               this_tracer = (i_species - 10) - (this_bin-1) * nspc_p_tomas_tracer
-               ! First bin of this tracer
-               spc_name = TRIM(spc_names_p(10+this_tracer))
-               ind_spc_GC = Ind_(TRIM(spc_name))+this_bin-1
-            ENDIF
-                  
-#else
+!#ifdef TOMAS
+!            IF(i_species .le. 10 + nspc_p_tomas_tracer) THEN
+!               spc_name = TRIM(spc_names_p(i_species))
+!               ind_spc_GC = Ind_(TRIM(spc_name))
+!            ELSE
+!               this_bin = CEILING( REAL(i_species - 10)/ nspc_p_tomas_tracer)
+!               this_tracer = (i_species - 10) - (this_bin-1) * nspc_p_tomas_tracer
+!               ! First bin of this tracer
+!               spc_name = TRIM(spc_names_p(10+this_tracer))
+!               ind_spc_GC = Ind_(TRIM(spc_name))+this_bin-1
+!            ENDIF
+!                  
+!#else
           spc_name = TRIM(spc_names_p(i_species))
           ind_spc_GC = Ind_(TRIM(spc_name))
-#endif
+!#endif
           background_conc = Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)
           C2d_prev(1:n_x_max,1:n_y_max) = &
                                   box_concnt_2D(1:n_x_max,1:n_y_max,i_species)
-#ifdef TOMAS
-         IF (i_species .eq. 50) THEN ! NK14
-            write(6,*) 'Debug (BZ): Background NK14 conc (molec)= ', background_conc
-            write(6,*) 'Debug (BZ): C2d_prev NK14 conc (molec)= ', C2d_prev(1,2)
-         ENDIF
-#endif
+!#ifdef TOMAS
+!         IF (i_species .eq. 50) THEN ! NK14
+!            write(6,*) 'Debug (BZ): Background NK14 conc (molec)= ', background_conc
+!            write(6,*) 'Debug (BZ): C2d_prev NK14 conc (molec)= ', C2d_prev(1,2)
+!         ENDIF
+!#endif
           Nt = CEILING(Dt/120)
           Pdt = Dt/REAL(Nt, fp) ! Dt=600 ! FLOOR(Pdx/Pu(1,1)/10)*10
 
@@ -1799,7 +1815,8 @@ CONTAINS
             Nt = Nt+1
             Pdt = Dt/Nt
           ENDDO
-            
+          write(6,*) 'Debug (BZ): Numberes of substep for advection & diffusion, Nt= ', Nt, &
+            'time interval Pdt(s) = ', Pdt
 
           !Concnt2D_bdy(:,:) = 0.0 
           ! Maybe fill the unused outer cells with background concentration
@@ -1816,15 +1833,16 @@ CONTAINS
 
           DO t1s = 1, Nt !NINT(Dt/Pdt)
 
-            ! advection ----------------------------------------------------
-            ! diffusion ----------------------------------------------------
+            
 
             !Pc_bdy(:,:) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
             !Pc_bdy(2:n_x_max2-1,2:n_y_max2-1) = Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1)
-            C2d_bg(:,:)  = background_conc
             !C2d_bg(:,:)  = 0.0_fp
+
+            C2d_bg(:,:)  = background_conc
             C2d_bg(2:n_x_max2-1,2:n_y_max2-1) =C2d_new(2:n_x_max2-1,2:n_y_max2-1) 
-            ! Only calculate the vertical half 2D domain         
+            
+            ! Only calculate the vertical half 2D domain
 
             !$OMP PARALLEL DO           &
             !$OMP DEFAULT( SHARED     ) &
@@ -1836,7 +1854,7 @@ CONTAINS
               Pc_bottom = C2d_bg( i_x,   i_y-1)
               Pc_right  = C2d_bg( i_x+1, i_y  )
               Pc_left   = C2d_bg( i_x-1, i_y  )
-           
+             
               CFL       = Pdt*Pu(i_x,i_y)/Pdx
               Pc_update = Pc_middle           &
                 - 0.5 * CFL    * ( Pc_right - Pc_left )   &
@@ -1845,7 +1863,8 @@ CONTAINS
                        +eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
               C2d_new(i_x, i_y) = Pc_update
               ! update the other half based on vertical symmetry 
-              C2d_new(i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y) 
+              C2d_new(i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y)
+
 
             ENDDO
             ENDDO
@@ -1874,10 +1893,10 @@ CONTAINS
           background_mass     = background_conc * Vgrid_EU
           excess_mass = D_mass_plume - background_mass
 #ifdef TOMAS
-         IF (i_species .eq. 50) THEN ! NK14
-            write(6,*) 'Debug (BZ): Background NK14 mass (molec)= ', background_mass
-            write(6,*) 'Debug (BZ): D_mass_plume  NK14 conc (molec)= ', D_mass_plume
-         ENDIF
+         !IF (i_species .eq. 50) THEN ! NK14
+         !   write(6,*) 'Debug (BZ): Background NK14 mass (molec)= ', background_mass
+         !   write(6,*) 'Debug (BZ): D_mass_plume  NK14 conc (molec)= ', D_mass_plume
+         !ENDIF
 #endif
           ! If mass need to enter the plume significantly larger than background mass, decrease the 
           ! mass entered, by scaling the whole plume conc
@@ -1919,10 +1938,32 @@ CONTAINS
           ! Need to adjust C2d_new if mass enter the plume larger than background mass
           box_concnt_2D(:,:,i_species) = C2d_new(2:n_x_max2-1,2:n_y_max2-1)
 #ifdef TOMAS
-         IF (i_species .eq. 50) THEN ! NK14
-            
-            write(6,*) 'Debug (BZ): C2d_new  NK14 conc (molec)= ', C2d_new(2,3)
-         ENDIF
+          ! Update TOMAS tracer (NK, SF) based on bulk sulfate ratio
+          IF (spc_name == 'SO4') THEN
+               DO i_y = 2, n_y_mid2, 1
+               DO i_x = 2, n_x_max2-1, 1
+                  ! Update NK
+                  TOMAS_scale = box_concnt_2D(i_x,i_y,i_species)/C2d_prev(i_x, i_y)
+                  box_concnt_2D(i_x, i_y, [(10+1+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) = &
+                  box_concnt_2D(i_x, i_y, [(10+1+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) * &
+                  TOMAS_SF
+                  
+                  box_concnt_2D(i_x, n_y_max+1-i_y, [(10+1+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) = &
+                  box_concnt_2D(i_x, i_y, [(10+1+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) 
+                  ! Update SF
+                  box_concnt_2D(i_x, i_y, [(10+2+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) = &
+                  box_concnt_2D(i_x, i_y, [(10+2+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) * &
+                  TOMAS_SF
+
+                  box_concnt_2D(i_x, n_y_max+1-i_y, [(10+2+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) = 
+                  box_concnt_2D(i_x, i_y, [(10+2+(ibin-1)*nspc_p_tomas_tracer, ibin=1,nBins)]) 
+               ENDDO
+               ENDDO
+          ENDIF
+         !IF (i_species .eq. 50) THEN ! NK14
+         !   
+         !   write(6,*) 'Debug (BZ): C2d_new  NK14 conc (molec)= ', C2d_new(2,3)
+         !ENDIF
 #endif
           
           Spc(ind_spc_GC)%Conc(i_lon,i_lat,i_lev) = background_mass_new / Vgrid_EU
@@ -1948,16 +1989,16 @@ CONTAINS
             ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
 #ifdef TOMAS
-         IF (i_species .eq. 50) THEN ! NK14
-            
-            WRITE (6, *) "(Debug: BZ) NK14 Mass enter plume num: ", &
-                      Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
-         ENDIF
-         IF (i_species .eq. 12) THEN ! SF1
-            
-            WRITE (6, *) "(Debug: BZ) SF1 Mass enter plume num: ", &
-                      Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
-         ENDIF
+         !IF (i_species .eq. 50) THEN ! NK14
+         !   
+         !   WRITE (6, *) "(Debug: BZ) NK14 Mass enter plume num: ", &
+         !             Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
+         !ENDIF
+         !IF (i_species .eq. 12) THEN ! SF1
+         !   
+         !   WRITE (6, *) "(Debug: BZ) SF1 Mass enter plume num: ", &
+         !             Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
+         !ENDIF
 #endif
         ENDDO ! DO i_species=1,n_species,1
     !WRITE (6, *) "(Debug: BZ) ID_SO4 is: ", id_SO4
@@ -1967,6 +2008,7 @@ CONTAINS
         !write(6,*) 'debug (BZ): SO2conc after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO2_p)) /  (n_x_max*n_y_max)
         !write(6,*) 'debug (BZ): SO4conc after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO4_p)) /  (n_x_max*n_y_max)
 #ifdef TOMAS
+   Write (6, *) 'Debug: BZ: after inplume conc, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
    Write (6, *) 'Debug: BZ: after inplume conc, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
    Write (6, *) 'Debug: BZ: after inplume conc Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
 #endif
