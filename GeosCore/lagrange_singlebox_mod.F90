@@ -80,9 +80,10 @@ MODULE Lagrange_singlebox_Mod
   TYPE(PlumeSource_t), ALLOCATABLE      :: Plume_sources(:)
   REAL(fp)                              :: Dx_init
   REAL(fp)                              :: Dy_init
-  REAL(fp)                              :: Length_init    ! m
-  REAL(fp)                              :: Aircraft_speed ! m/s
-  REAL(fp)                              :: Critical_day         ! Maximum plume lifetime allowed, day
+  REAL(fp)                              :: Length_init             ! m
+  REAL(fp)                              :: Aircraft_speed          ! m/s
+  REAL(fp)                              :: Critical_day_2D         ! Maximum 2-D plume lifetime allowed, day
+  REAL(fp)                              :: Critical_day_1D         ! Maximum total plume lifetime allowed, day
   ! Species ID flags correspond to GEOS-Chem species
   INTEGER                               :: id_SO2,  id_SO4,  id_NH3,   id_NH4,  id_PASVLA
   INTEGER                               :: id_OH,   id_O3,   id_H2O,   id_HO2,  id_PH2SO4
@@ -183,6 +184,7 @@ MODULE Lagrange_singlebox_Mod
   INTEGER, PARAMETER        :: Split_length       = 1            ! how many times of DX
   REAL(fp), PARAMETER       :: Dissolve_critiria  = 10*0.01
   REAL(fp), PARAMETER       :: Volume_percent     = 30*0.01
+  REAL(fp), PARAMETER       :: frac_mass = 0.95   ! fraction of tracer accumulated along the horizontal and verticle length scale
   ! REAL(fp), PARAMETER       :: Critical_day       = 28.0         ! [day] ! Move this into geoschem_config.yml
   REAL(fp), PARAMETER       :: Radical_exc_factor = 1.0          ! BZ: Add for Radical exchange after chemistry, real number between 0 and 1
 
@@ -291,6 +293,15 @@ CONTAINS
    
     Write (6, *) "Debug: (BZ) Num of reactions from KPP is: ", NREACT
     Write (6, *) "Debug: (BZ) Num of species in plume is : ", nspc_p
+    ! create species name database
+    ALLOCATE( spc_names_p_use(nspc_p), STAT=RC )
+    IF ( RC /= 0 ) THEN
+      errMsg = 'Error allocating spc_names_p_use'
+      CALL ERROR_STOP( errMsg, thisLoc)
+      RETURN
+    ENDIF
+    spc_names_p_use(1:nspc_p)=spc_names_p(1:nspc_p)
+
     ALLOCATE( RXNRATE_CONST_KPP(NX_GC, NY_GC, NZ_GC, NREACT ), STAT=RC )
     IF (RC /= 0) THEN
         errMsg = 'Error allocating RXNRATE_CONST_KPP'
@@ -325,7 +336,8 @@ CONTAINS
     Num_of_sources      =             Input_Opt%Plume_sources_num
     Length_init         =             Input_Opt%Initial_length*1000.0   ! km to m
     Aircraft_speed      =             Input_Opt%Aircraft_speed  !m/s
-    Critical_day        =             Input_Opt%Critical_day    ! Day
+    Critical_day_2D     =             Input_Opt%Critical_day_2D    ! Day
+    Critical_day_1D     =             Input_Opt%Critical_day_1D    ! Day
     !plume_interval      =             Input_Opt%plume_interval ! degree
     N_stop_inject       =             Input_Opt%Num_of_injection
     
@@ -381,6 +393,8 @@ CONTAINS
     n_y_max2                   =      n_y_max+2
     n_x_mid2                   =      (n_x_max2+1)/2 
     n_y_mid2                   =      (n_y_max2+1)/2
+    n_slab_max                 =      (INT(n_y_max/4)+1)*4 ! close to n_y_max, number of slabs in 1D
+    n_slab_max2                =      n_slab_max+2
 
     !mass_S_SO2_b               =      0.0_fp
     mass_S_SO2_1               =      0.0_fp
@@ -426,6 +440,7 @@ CONTAINS
       !CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
     ENDIF
+
     ! Creat file for sulfur mass diag
     File_Smass_IU = findFreeLun()
     file_Smass   = 'Plume_Sulfur_mass.txt'
@@ -438,6 +453,8 @@ CONTAINS
     OPEN( File_spc_init_IU, FILE=TRIM( file_spc_init ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
     CLOSE(File_spc_init_IU)
+
+    
     ! Return if there was an error opening the file
     ! IF ( IOS /= 0 ) THEN
         ! Define error message
@@ -609,7 +626,7 @@ CONTAINS
     nspc_p             =              10 + nspc_p_tomas_tracer * nBins
     Write (6, *) "Debug: (BZ) Num of Bins in plume is : ", nBins
     Write (6, *) "Debug: (BZ) Num of species in plume changed to : ", nspc_p
-        !-------------------------------------------------
+    !-------------------------------------------------
     ! Initialization process for TOMAS
     ALLOCATE( Xk( nBins+1 ), STAT=RC )
     IF ( RC /= 0 ) CALL ALLOC_ERR( 'Xk [TOMAS] in plume' )
@@ -646,6 +663,10 @@ CONTAINS
     ENDDO
 #endif
     ! create species name database for TOMAS
+    IF (ALLOCATED (spc_names_p_use)) THEN
+      DEALLOCATE (spc_names_p_use)
+      Write (6, *) "Debug: (BZ) Reallocate plume model database : spc_names_p_use"
+    ENDIF
     ALLOCATE( spc_names_p_use(nspc_p), STAT=RC )
     IF ( RC /= 0 ) CALL ALLOC_ERR( 'spc_names_p_use in plume' )
     spc_names_p_use(1:10)=spc_names_p(1:10)
@@ -837,7 +858,8 @@ CONTAINS
         ELSE
             DO i_box = Num_inject+1, Num_Stop, 1
                 ALLOCATE(Plume2d_new)
-                Plume2d_new%IsNew           = 1
+                Plume2d_new%IsDissolve      = .False.
+                Plume2d_new%IsTransfer      = .False.
                 Plume2d_new%label           = i_box
 
                 Plume2d_new%LON             = Plume_sources(1)%lon
@@ -900,7 +922,7 @@ CONTAINS
                   Plume2d_new%CONCNT2d(:,:,i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
                   Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) * &
                                                               (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
-                  Plume2d_new%MassRef2d(i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
+                  Plume2d_new%MassRef2d(i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)*(n_x_max*n_y_max*Vgrid_2D)
                 ENDDO
                 ! Read TOMAS tracer 02, 03, ... nbins
                 ! In GEOS-Chem the order is tracer1_01, tracer2_02,tracer3_03
@@ -920,7 +942,7 @@ CONTAINS
                     Plume2d_new%CONCNT2d(:,:,id_tracer) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev)
                     Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev) * &
                                                                 (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
-                    Plume2d_new%MassRef2d(id_tracer) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev)
+                    Plume2d_new%MassRef2d(id_tracer) = Spc(id_tracer1)%Conc(i_lon, i_lat, i_lev)*(n_x_max*n_y_max*Vgrid_2D)
                   ENDDO
                 ENDDO
                   
@@ -931,7 +953,7 @@ CONTAINS
                   Plume2d_new%CONCNT2d(:,:,i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
                   Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) * &
                                                               (1 - (Vgrid_2D*n_x_max*n_y_max)/Vgrid_EU)
-                  Plume2d_new%MassRef2d(i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)
+                  Plume2d_new%MassRef2d(i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)*(n_x_max*n_y_max*Vgrid_2D)
                 ENDDO
 #endif
                 ! add tracer concentration
@@ -1249,8 +1271,8 @@ CONTAINS
   INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
 
   !TYPE(SpcConc), POINTER        :: Spc(:)
-  !TYPE(Plume2d_list), POINTER :: Plume2d_head, Plume2d_tail
-          
+  !TYPE(Plume2d_list), POINTER :: Plume2d_head, Plume2d_tail  
+
   INTEGER                :: i_box, i_lon, i_lat, i_lev
   INTEGER                :: ii, jj, kk, i, j
   INTEGER                :: ki
@@ -1311,7 +1333,7 @@ CONTAINS
   real(fp)               :: C2d_prev_NK(n_x_max,n_y_max), C2d_prev_SF(n_x_max,n_y_max) 
   real(fp)               :: C2d_new_NK(n_x_max,n_y_max), C2d_new_SF(n_x_max,n_y_max)
 #endif
-  !eal(fp)               :: Concnt2D_bdy(n_x_max2, n_y_max2)
+  Real(fp)               :: Xscale, Yscale
   
 
   REAL(fp), dimension(:,:,:), allocatable :: box_concnt_2D
@@ -1322,7 +1344,9 @@ CONTAINS
   REAL(fp), POINTER      :: Ptemp(:,:,:)
   REAL(fp), POINTER      :: T1(:,:,:)
   REAL(fp), POINTER      :: T2(:,:,:)
-  real(fp), pointer      :: P_BXHEIGHT(:,:,:)
+  REAL(fp), POINTER      :: P_BXHEIGHT(:,:,:)
+  REAL(fp), POINTER      :: TROPP(:,:)
+
 
   TYPE(SpcConc), POINTER        :: Spc(:)
   TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
@@ -1368,14 +1392,14 @@ CONTAINS
   RK_Dt(4) = Dt
   RK_Dt(5) = 0.0
   
-  u     => State_Met%U   ! m/s
-  v     => State_Met%V   ! m/s
-  omeg  => State_Met%OMEGA     ! Updraft velocity [Pa/s]
-  Ptemp => State_Met%THETA     ! Potential temperature [K]
-  T1    => State_Met%TMPU1     ! Temperature at start of timestep [K]
-  T2    => State_Met%TMPU2     ! Temperature at end of timestep [K]
-  P_BXHEIGHT => State_Met%BXHEIGHT  ![NX_GC,NY_GC,KKPAR]
-
+  u             =>     State_Met%U   ! m/s
+  v             =>     State_Met%V   ! m/s
+  omeg          =>     State_Met%OMEGA     ! Updraft velocity [Pa/s]
+  Ptemp         =>     State_Met%THETA     ! Potential temperature [K]
+  T1            =>     State_Met%TMPU1     ! Temperature at start of timestep [K]
+  T2            =>     State_Met%TMPU2     ! Temperature at end of timestep [K]
+  P_BXHEIGHT    =>     State_Met%BXHEIGHT  ![NX_GC,NY_GC,KKPAR]
+  TROPP         =>     State_Met%TROPP     ! tropopause pressure, hpa
    mass_S_SO2_2 = 0.0_fp
    mass_S_SO4_2 = 0.0_fp   ! mass after physics
 
@@ -1684,26 +1708,21 @@ CONTAINS
     ! ----------------------------------------------------------------
     ! update     
     ! ----------------------------------------------------------------
-    Plume2d_curr%IsNew   = 0
-    
     Plume2d_curr%LON     = box_lon
     Plume2d_curr%LAT     = box_lat
     Plume2d_curr%LEV     = box_lev
     Plume2d_curr%lat_ind = i_lat
     Plume2d_curr%lon_ind = i_lon
     Plume2d_curr%lev_ind = i_lev
-
     Plume2d_curr%LENGTH  = box_length
     Plume2d_curr%ALPHA   = box_alpha
     Plume2d_curr%label   = box_label
     Plume2d_curr%LIFE    = box_life
-
-
     Plume2d_curr%PDX = Pdx
     Plume2d_curr%PDY = Pdy
-
     Plume2d_curr%CONCNT2d    = box_concnt_2D
 
+    
     Vgrid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
     ! write(6,*) 'debug (BZ): SO2mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     ! write(6,*) 'debug (BZ): SO4mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
@@ -2132,7 +2151,7 @@ CONTAINS
             !write(6,*) 'debug (BZ): SO4mass middle physics 3: ', mass_plume_new 
             ! mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
-#ifdef TOMAS
+!#ifdef TOMAS
          !IF (i_species .eq. 50) THEN ! NK14
          !   
          !   WRITE (6, *) "(Debug: BZ) NK14 Mass enter plume num: ", &
@@ -2143,10 +2162,8 @@ CONTAINS
          !   WRITE (6, *) "(Debug: BZ) SF1 Mass enter plume num: ", &
          !             Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
          !ENDIF
-#endif
+!#endif
         ENDDO ! DO i_species=1,n_species,1
-    !WRITE (6, *) "(Debug: BZ) ID_SO4 is: ", id_SO4
-    !WRITE (6, *) "(Debug: BZ) ID_SO2 is: ", id_SO2
         !write(6,*) 'debug (BZ): SO2mass after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO2_p)) *  Vgrid_2D
         !write(6,*) 'debug (BZ): SO4mass after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO4_p)) *  Vgrid_2D
         !write(6,*) 'debug (BZ): SO2conc after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO2_p)) /  (n_x_max*n_y_max)
@@ -2161,6 +2178,29 @@ CONTAINS
     mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4_p)) * Vgrid_2D
     !write(6,*) 'debug (BZ): SO2mass after physics: ', SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     !write(6,*) 'debug (BZ): SO4mass after physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
+
+    ! --------------------------------------------------------------
+    ! Decide if this plume will be dissolve or transfer:
+    ! --------------------------------------------------------------
+    ! Fourth Judge:
+    ! If the plume touch the tropopause, dissolve the plume
+    IF (box_lev>TROPP(i_lon,i_lat).AND.(TROPP_sink)) THEN
+      Plume_curr%IsDissolve = .True.
+    ENDIF
+    
+    ! Change from 2D to 1D, 
+    ! once the tilting degree is bigger than 88 deg (88/180*3.14)
+    IF(Plume2d_curr%LIFE>4.0*3600.0)THEN
+      Xscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO4_p), Pdx, Pdy, frac_mass, 2)
+      Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO4_p), Pdx, Pdy, frac_mass, 1)
+      box_theta = ATAN( Xscale/Yscale )
+      IF ((Xscale/Yscale .gt. 25.0_fp) .OR.(Plume2d_curr%LIFE > Critical_day_2D * 3600.0_fp)) THEN
+         Plume_curr%IsTransfer = .True.
+
+      ENDIF 
+    ENDIF
+
+
     Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
   ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
@@ -2189,6 +2229,7 @@ CONTAINS
   IF(ASSOCIATED(T1)) nullify(T1)
   IF(ASSOCIATED(T2)) nullify(T2)
   IF(ASSOCIATED(P_BXHEIGHT)) nullify(P_BXHEIGHT)
+  IF(ASSOCIATED(TROPP)) nullify(TROPP)
   IF(ASSOCIATED(Spc)) nullify(Spc)
   !IF(ASSOCIATED(X_edge)) nullify(X_edge)
   !IF(ASSOCIATED(Y_edge)) nullify(Y_edge)
@@ -3602,18 +3643,23 @@ CONTAINS
     real(fp)                      :: box_lon, box_lat, box_lev
     real(fp)                      :: box_length, box_alpha, box_theta
     real(fp)                      :: box_extra, box_life, box_label
+    REAL(fp)                      :: box_RA, box_Rb
     real(fp)                      :: Pdx, Pdy
-    real(fp)                      :: Vgrid_EU, Vgrid_2D
+    real(fp)                      :: Vgrid_EU, Vgrid_2D, Vgrid_1D
     real(fp)                      :: conc_background, mass_release
     REAL(fp)                      :: Dt
+    REAL(fp)                      :: ConcSlab(n_slab_max)
+    REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff
 
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: ErrMsg
     CHARACTER(LEN=255)            :: ThisLoc
 
     real(fp), dimension(:,:,:), allocatable :: box_concnt_2D
+    real(fp), dimension(:,:), allocatable   :: box_concnt_1D
 
-    TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
+    TYPE(Plume2d_list), POINTER :: Plume2d_next, Plume2d_curr, Plume2d_prev
+    TYPE(Plume1d_list), POINTER :: Plume1d_next, Plume1d_curr, Plume1d_prev, Plume1d_new
 
     Spc                    =>  State_Chm%Species
     n_species              =   State_Chm%nSpecies
@@ -3621,47 +3667,111 @@ CONTAINS
     ThisLoc                =   ' -> at plume_structure_change (in module GeosCore/lagrange_singlebox_mod.F90)'
     RC                     =   GC_SUCCESS
     ErrMsg                 =   ''
-    NULLIFY(Plume2d_new, Plume2d_curr, Plume2d_prev)
+    NULLIFY(Plume2d_next, Plume2d_curr, Plume2d_prev)
+    NULLIFY(Plume1d_next, Plume1d_curr, Plume1d_prev, Plume1d_new)
     ! Debug for dissolving plume at exit time
     IF (ITS_TIME_FOR_EXIT()) THEN
      Write (6, *) "Debug (BZ): time for exit detected in plume model"
     ENDIF
     !ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species))
+
+    ! convert 2D seg to 1D seg if 1) Plume2d%IsTransfer=1, or 2) Lifetime larger than a critical value
+
+
     ! dissolve 2D plume seg 
-    ! lifetime larger than 1-Day
     IF(.NOT.ASSOCIATED(Plume2d_head)) GOTO 401
     Plume2d_curr => Plume2d_head
-    !NULLIFY(Plume2d_prev)
-    i_box = 0
 
     DO WHILE(ASSOCIATED(Plume2d_curr))
-      i_box = i_box+1
 
-      box_lon    = Plume2d_curr%LON
-      box_lat    = Plume2d_curr%LAT
-      box_lev    = Plume2d_curr%LEV
-      box_length = Plume2d_curr%LENGTH
-      box_alpha  = Plume2d_curr%ALPHA
+      box_lon       = Plume2d_curr%LON
+      box_lat       = Plume2d_curr%LAT
+      box_lev       = Plume2d_curr%LEV
+      box_length    = Plume2d_curr%LENGTH
+      box_alpha     = Plume2d_curr%ALPHA
+      box_label     = Plume2d_curr%label
+      box_life      = Plume2d_curr%LIFE
+      Pdx           = Plume2d_curr%PDX
+      Pdy           = Plume2d_curr%PDY
 
-      box_label  = Plume2d_curr%label
-      box_life   = Plume2d_curr%LIFE
-
-      Pdx        = Plume2d_curr%PDX
-      Pdy        = Plume2d_curr%PDY
-
-      !box_concnt_2D = Plume2d_curr%CONCNT2d
       i_lon         = Plume2d_curr%lon_ind
       i_lat         = Plume2d_curr%lat_ind
       i_lev         = Plume2d_curr%lev_ind
 
       Vgrid_EU     = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp ! [cm3]
       Vgrid_2D       = Pdx*Pdy*box_length*1.0e+6_fp
+
+      Plume2d_next => Plume2d_curr%next
+
       ! --------------------------------------------------------------------
-      ! delete the node for 2D plume (current criteria: plume lifetime > 1days)
-      ! At the end of simulation, automatically dissolve all plumes
+      ! If plume2d_curr%IsTransfer is true, create 1D segment
+      ! If plume2d_curr%IsTransfer is true or If plume2d_curr%IsDissolve is true
+      ! Dissolve the 2D seg
       ! --------------------------------------------------------------------
-      
-      IF((box_life .GT. Critical_day*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
+      IF(Plume2d_curr%IsTransfer) THEN
+         ! Creating 1D list
+         ALLOCATE(Plume1d_new)
+         Plume1d_new%LABEL = Num_Plume1d
+         Plume1d_new%LON = Plume2d_curr%LON
+         Plume1d_new%LAT = Plume2d_curr%LAT
+         Plume1d_new%LEV = Plume2d_curr%LEV
+         Plume1d_new%lon_ind = Plume2d_curr%lon_ind
+         Plume1d_new%lat_ind = Plume2d_curr%lat_ind
+         Plume1d_new%lev_ind = Plume2d_curr%lev_ind
+         Plume1d_new%IsDissolve = .False.
+         Plume1d_new%LENGTH = Plume2d_curr%LENGTH
+         Plume1d_new%ALPHA  = Plume2d_curr%ALPHA 
+         Plume1d_new%LIFE   = Plume2d_curr%LIFE
+         ALLOCATE(Plume1d_new%CONCNT1d(n_slab_max,nspc_p))
+         NULLIFY(Plume1d_new%next)
+         
+         ! Update RA, RB, THETA, CONCNT1D
+         DO i_species = 1, nspc_p
+            Xscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,i_species), Pdx, Pdy, frac_mass, 2)
+            Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,i_species), Pdx, Pdy, frac_mass, 1)
+            box_theta = ATAN( Xscale/Yscale )
+            CALL Slab_init_bilinear(Pdx, Pdy, box_theta, Plume2d_curr%CONCNT2d(:,:,i_species), &
+                     Yscale, box_Ra, box_Rb, ConcSlab)
+            Plume1d_new%CONCNT1d(:, i_species) = ConcSlab
+            IF(i_species .eq. id_SO4_p) THEN
+               Plume1d_new%RA = box_Ra
+               Plume1d_new%RB = box_Rb
+               Plume1d_new%THETA = box_theta
+            ENDIF
+           
+         ENDDO
+         Vgrid_1D = Plume1d_new%RA*Plume1d_new%RB*Plume1d_new%LENGTH*1.0e+6_fp
+         DO i_species = 1, nspc_p
+            mass_plume_2D = Vgrid_2D * SUM(Plume2d_curr%CONCNT2d(:,:,i_species))
+            mass_plume_1D = Vgrid_1D * SUM(Plume1d_new%CONCNT1d(:,i_species))
+            mass_plume_diff = mass_plume_1D - mass_plume_2D
+            IF(ABS(D_mass_plume/mass_plume)>0.01)THEN
+               Write (6, *) "Debug (BZ): More than 1% mass lost from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
+                     "Species: ", TRIM(spc_names_p_use(i_species)), 'mass_plume_2D= ', mass_plume_2D, &
+                     'mass_plume_1D= ', mass_plume_1D
+            ENDIF
+            ind_spc_GC = Ind_(TRIM(spc_names_p_use(i_species)))
+            Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) = Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) * &
+                     (1 + mass_plume_diff/Vgrid_EU)
+         ENDDO
+
+
+         ! If no existing 1D segment, creating the first node
+         IF(.NOT.ASSOCIATED(Plume1d_head))THEN
+            Plume1d_head => Plume1d_new
+            Plume1d_tail => Plume1d_new
+            WRITE(6,*)'*** Ceate the first Plume1d node: Num_Plume1d = ', Num_Plume1d, 'label = ', Plume1d_new%label
+         ELSE
+            Plume1d_tail%next => Plume1d_new
+            Plume1d_tail      => Plume1d_new
+         ENDIF
+         Num_Plume1d = Num_Plume1d + 1
+         NULLIFY(Plume1d_new)
+
+      ENDIF
+
+      !IF((box_life .GT. Critical_day*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
+      IF(Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer) THEN
         mass_S_SO2_r2 = mass_S_SO2_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
                       !- Plume2d_curr%MassRef2d(id_SO2)
         mass_S_SO4_r2 = mass_S_SO4_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))  * Vgrid_2D 
@@ -3670,127 +3780,108 @@ CONTAINS
                       ! Plume2d_curr%MassRef2d(id_SO2))
         !mass_S_SO4_4 = mass_S_SO4_3 - (SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4))  * Vgrid_2D - &
                       ! Plume2d_curr%MassRef2d(id_SO4))
-      ! delete the only node
-      IF(.NOT.ASSOCIATED(Plume2d_curr%next) .AND. &
-                      .NOT.ASSOCIATED(Plume2d_prev))THEN
-        !i_box = i_box-1
-        !Stop_loop = 1
-        ! Release mass in Plume2d_head in Eulerian grid
-        DO i_species = 1, nspc_p
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          !mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D - &
-          !            Plume2d_curr%MassRef2d(i_species)
-          spc_name     = TRIM(spc_names_p(i_species))
-          ind_spc_GC   = Ind_(TRIM(spc_name))
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D
-          Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
-                         mass_release) / Vgrid_EU)
-        ENDDO
 
-        WRITE(6,*)'                '
-        WRITE(6,*)'debug (BZ): grid_volume=', Vgrid_EU, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
-		WRITE(6,*)'*** Deleting the last Plume2d segment: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
-        WRITE(6,*)'                '
-        !IF (ALLOCATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
-        DEALLOCATE(Plume2d_curr)
-        NULLIFY(Plume2d_prev)
-        NULLIFY(Plume2d_head)
-        NULLIFY(Plume2d_tail)
-        Num_Plume2d = Num_Plume2d - 1
+        ! Release mass in Eulerian grid only if IsDissolve is true
+        IF (Plume2d_curr%IsDissolve) THEN
+            DO i_species = 1, nspc_p
 
-        GOTO  401! add corresponding 1-D seg
+               spc_name     = TRIM(spc_names_p_use(i_species))
+               ind_spc_GC   = Ind_(TRIM(spc_name))
+               mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D
+               Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
+                              MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
+                              mass_release) / Vgrid_EU)
+            ENDDO
+         ENDIF
 
-      ! delete the tail node 
-      ELSEIF(.NOT.ASSOCIATED(Plume2d_curr%next))THEN 
-        WRITE(6,*)'debug (BZ): grid_volume=', Vgrid_EU, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
-		WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
-        ! Release mass in Plume2d_curr in Eulerian grid
-        DO i_species = 1, nspc_p
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          !mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D - &
-          !            Plume2d_curr%MassRef2d(i_species)
-          spc_name     = TRIM(spc_names_p(i_species))
-          ind_spc_GC   = Ind_(TRIM(spc_name))
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D
-          Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
-                         mass_release) / Vgrid_EU) 
-        ENDDO
+        ! Delete the head node
+        IF (.NOT. ASSOCIATED(Plume2d_prev)) THEN
+            Num_Plume2d = Num_Plume2d - 1
+            WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+            Plume2d_head => Plume2d_next
+         ! Delete middle or tail node
+        ELSE 
+             Plume2d_prev%next => Plume2d_next
+             Num_Plume2d = Num_Plume2d - 1
+             ! If delete the tail node, update the tail pointer
+             IF (.NOT.ASSOCIATED(Plume2d_next))THEN
+                Plume2d_tail => Plume2d_prev
+                WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+             ELSE
+                WRITE(6,*)'*** Deleting middle node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+             ENDIF
+         ENDIF
+         DEALLOCATE(Plume2d_curr)
+         Plume2d_curr => Plume2d_next
 
-          Plume2d_tail => Plume2d_prev
-          NULLIFY(Plume2d_tail%next)
-          !IF (ALLOCATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
-          DEALLOCATE(Plume2d_curr)
-          i_box = i_box-1
-          Num_Plume2d = Num_Plume2d - 1
-
-          Stop_loop = 1
-          GOTO 401
-          
-        ! delete the head node
-      ELSEIF (.NOT. ASSOCIATED(Plume2d_prev)) THEN
-        Plume2d_head => Plume2d_curr%next
-        !Plume2d_prev => Plume2d_curr%next
-        ! Release mass in Plume2d_curr in Eulerian grid
-        WRITE(6,*)'debug (BZ): grid_volume=', Vgrid_EU, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
-		WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
-        DO i_species = 1, nspc_p
-          !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-          !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-          !             conc_background *n_x_max * n_y_max ) * V_grid_2D
-          !mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D - &
-          !            Plume2d_curr%MassRef2d(i_species)
-          spc_name     = TRIM(spc_names_p(i_species))
-          ind_spc_GC   = Ind_(TRIM(spc_name))
-          mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D
-          Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
-                         MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
-                         mass_release) / Vgrid_EU) 
-        ENDDO
-        !IF (ALLOCATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
-        DEALLOCATE(Plume2d_curr)
-        Plume2d_curr => Plume2d_head
-        Num_Plume2d = Num_Plume2d - 1
-        ! delete middle node
       ELSE
-          Plume2d_prev%next => Plume2d_curr%next
-          ! Release mass in Plume2d_curr in Eulerian grid
-          WRITE(6,*)'debug (BZ): grid_volume=', Vgrid_EU, '(i_lat, i_lon, i_lev) = (', i_lat, i_lon, i_lev,')'
-          WRITE(6,*)'*** Deleting middle node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
-          DO i_species = 1, nspc_p
-            !conc_background = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-            !mass_release = (SUM(Plume2d_curr%CONCNT2d(:,:,i_species)) -      &
-            !            conc_background *n_x_max * n_y_max ) * V_grid_2D
-            !mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D - &
-            !          Plume2d_curr%MassRef2d(i_species)
-            spc_name     = TRIM(spc_names_p(i_species))
-            ind_spc_GC   = Ind_(TRIM(spc_name))
-            mass_release = SUM(Plume2d_curr%CONCNT2d(:,:,i_species))  * Vgrid_2D
-            Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
-                          MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
-                          mass_release) / Vgrid_EU) 
-          ENDDO
-          ! IF (ALLOCATED(Plume2d_curr%CONCNT2d)) DEALLOCATE(Plume2d_curr%CONCNT2d)
-          DEALLOCATE(Plume2d_curr)
-          Plume2d_curr => Plume2d_prev%next
-          Num_Plume2d = Num_Plume2d - 1
+         Plume2d_prev => Plume2d_curr
+         Plume2d_curr => Plume2d_next 
       ENDIF
+   ENDDO
+   ! If all nodes were deleted
+   IF ( .NOT. ASSOCIATED(Plume2d_head) ) THEN
+      NULLIFY(Plume2d_tail)
+   ENDIF
 
-    ELSE
-      ! IF deletion occur, no need to move Plume_prev and Plume_curr
-      Plume2d_prev => Plume2d_curr
-      Plume2d_curr => Plume2d_curr%next 
-    ENDIF
-    
-    ENDDO
+      
+
 401 CONTINUE
-    !IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
+    IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
+    ! Start to dissolve Plume1d
+    Plume1d_curr => Plume1d_head
+    DO WHILE(ASSOCIATED(Plume1d_curr))
+      Plume1d_next => Plume1d_curr%next
+      IF(Plume1d_curr%IsDissolve) THEN
+         i_lon = Plume1d_curr%lon_ind
+         i_lat = Plume1d_curr%lat_ind
+         i_lev = Plume1d_curr%lev_ind
+         box_RA =Plume1d_curr%RA
+         box_RB =Plume1d_curr%RB
+         box_length = Plume1d_curr%LENGTH
+        ! Release the mass
+         Vgrid_1D     = box_RA*box_RB*box_length*1.0e+6_fp
+         Vgrid_EU     = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp ! [cm3]
+         DO i_species = 1, nspc_p
 
+            spc_name     = TRIM(spc_names_p_use(i_species))
+            ind_spc_GC   = Ind_(TRIM(spc_name))
+            mass_release = SUM(Plume1d_curr%CONCNT1d(:,i_species))  * Vgrid_1D
+            Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) =       &
+                           MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
+                           mass_release) / Vgrid_EU)
+         ENDDO
+        ! Delete the head node
+        IF (.NOT. ASSOCIATED(Plume1d_prev)) THEN
+            Num_Plume1d = Num_Plume1d - 1
+            WRITE(6,*)'*** Deleting head node: Num_Plume1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+            Plume1d_head => Plume1d_next
+         ! Delete middle or tail node
+        ELSE 
+             Plume1d_prev%next => Plume1d_next
+             Num_Plume1d = Num_Plume1d - 1
+             ! If delete the tail node, update the tail pointer
+             IF (.NOT.ASSOCIATED(Plume1d_next))THEN
+                Plume1d_tail => Plume1d_prev
+                WRITE(6,*)'*** Deleting tail node: Num_Plume1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+             ELSE
+                WRITE(6,*)'*** Deleting middle node: Num_Plum1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+             ENDIF
+         ENDIF
+         DEALLOCATE(Plume1d_curr)
+         Plume1d_curr => Plume1d_next
+      !ELSEIF (splitting plume cross section)
+
+      !ELSEIF (splitting plume length)
+      ELSE
+         Plume1d_prev => Plume1d_curr
+         Plume1d_curr => Plume1d_next 
+      ENDIF
+    ENDDO
+    ! If all nodes were deleted
+   IF ( .NOT. ASSOCIATED(Plume1d_head) ) THEN
+      NULLIFY(Plume1d_tail)
+   ENDIF
 400 CONTINUE
     ! Cleanup pointer
     !IF (ALLOCATED(box_concnt_2D)) DEALLOCATE(box_concnt_2D)
@@ -5611,7 +5702,7 @@ END FUNCTION GetInjectionLat
 !======================================================================
 
   SUBROUTINE Slab_init_bilinear(Pdx, Pdy, theta1, Pc_2D, Height1, &
-						box_Ra, box_Rb, Cslab, n_slab_max)
+						box_Ra, box_Rb, Cslab)
  
     IMPLICIT NONE
 
@@ -5619,7 +5710,7 @@ END FUNCTION GetInjectionLat
     REAL(fp), INTENT(INOUT)  :: box_Ra, box_Rb
     REAL(fp), INTENT(INOUT)  :: Cslab(n_slab_max)
     REAL(fp)    :: Pc_2D(n_x_max,n_y_max) !, Ec_2D(n_x_max,n_y_max)
-    INTEGER, INTENT(IN)      :: n_slab_max
+    ! INTEGER, INTENT(IN)      :: n_slab_max
 
     !INTEGER, parameter     :: Nb = n_slab_max
     INTEGER, parameter     :: Na = 128
@@ -5633,7 +5724,7 @@ END FUNCTION GetInjectionLat
     REAL(fp)    :: Adx, Ady, Bdx, Bdy
     REAL(fp)    :: Prod, M, Lb, La
 
-    REAL(fp)    :: C_slab(n_slab_max) !, Extra_slab(Nb)
+    REAL(fp)    :: Cslab_tmp(n_slab_max) !, Extra_slab(Nb)
 
     real(fp)  :: start, finish
 
@@ -5695,15 +5786,15 @@ END FUNCTION GetInjectionLat
         Lb = LenB
         La = Height1 *TAN(theta1)
 
-        DO i=1,n_slab_max,1
-          C_slab(i)     = SUM(C2d(:,i)) *(LenA*LenB)/ (La*Lb)
+        DO i=j,n_slab_max,1
+          Cslab_tmp(j)     = SUM(C2d(:,j)) *(LenA*LenB)/ (La*Lb)
         ENDDO
 
 
       ! Return:
       box_Ra = La
       box_Rb = Lb
-      Cslab(1:n_slab_max) = C_slab(1:n_slab_max)
+      Cslab(1:n_slab_max) = Cslab_tmp(1:n_slab_max)
 
   END SUBROUTINE Slab_init_bilinear
 

@@ -4087,9 +4087,9 @@ CONTAINS
     ENDIF
     Input_Opt%PlumeGrid2d_dy = v_real
     !------------------------------------------------------------------------
-    ! Get critical day
+    ! Get critical day for 2D seg
     !------------------------------------------------------------------------
-    key   = "Plume_sources%lagrangian_model%critical_day"
+    key   = "Plume_sources%lagrangian_model%critical_day_2D"
     v_real = MISSING_REAL
     CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
     IF ( RC /= GC_SUCCESS ) THEN
@@ -4097,7 +4097,19 @@ CONTAINS
        CALL GC_Error( errMsg, RC, thisLoc )
        RETURN
     ENDIF
-    Input_Opt%Critical_day = v_real
+    Input_Opt%Critical_day_2D = v_real
+    !------------------------------------------------------------------------
+    ! Get critical day for 1D seg
+    !------------------------------------------------------------------------
+    key   = "Plume_sources%lagrangian_model%critical_day_1D"
+    v_real = MISSING_REAL
+    CALL QFYAML_Add_Get( Config, TRIM( key ), v_real, "", RC )
+    IF ( RC /= GC_SUCCESS ) THEN
+       errMsg = 'Error parsing ' // TRIM( key ) // '!'
+       CALL GC_Error( errMsg, RC, thisLoc )
+       RETURN
+    ENDIF
+    Input_Opt%Critical_day_1D = v_real
     !------------------------------------------------------------------------
     ! Get number of sources
     !------------------------------------------------------------------------
