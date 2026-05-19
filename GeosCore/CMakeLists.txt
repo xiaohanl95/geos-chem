@@ -52,7 +52,7 @@ add_library(GeosCore
   land_mercury_mod.F90
   linear_chem_mod.F90
   linoz_mod.F90
-  lagrange_mod.F90
+  #lagrange_mod.F90
   lagrange_singlebox_mod.F90
   mapping_mod.F90
   mercury_mod.F90

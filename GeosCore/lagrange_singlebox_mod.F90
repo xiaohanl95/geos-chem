@@ -2185,7 +2185,7 @@ CONTAINS
     ! Fourth Judge:
     ! If the plume touch the tropopause, dissolve the plume
     IF (box_lev>TROPP(i_lon,i_lat).AND.(TROPP_sink)) THEN
-      Plume_curr%IsDissolve = .True.
+      Plume2d_curr%IsDissolve = .True.
     ENDIF
     
     ! Change from 2D to 1D, 
@@ -2195,7 +2195,7 @@ CONTAINS
       Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO4_p), Pdx, Pdy, frac_mass, 1)
       box_theta = ATAN( Xscale/Yscale )
       IF ((Xscale/Yscale .gt. 25.0_fp) .OR.(Plume2d_curr%LIFE > Critical_day_2D * 3600.0_fp)) THEN
-         Plume_curr%IsTransfer = .True.
+         Plume2d_curr%IsTransfer = .True.
 
       ENDIF 
     ENDIF
@@ -3650,7 +3650,7 @@ CONTAINS
     REAL(fp)                      :: Dt
     REAL(fp)                      :: ConcSlab(n_slab_max)
     REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff
-
+    REAL(fp)                      :: Xscale, Yscale
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: ErrMsg
     CHARACTER(LEN=255)            :: ThisLoc
@@ -3745,7 +3745,7 @@ CONTAINS
             mass_plume_2D = Vgrid_2D * SUM(Plume2d_curr%CONCNT2d(:,:,i_species))
             mass_plume_1D = Vgrid_1D * SUM(Plume1d_new%CONCNT1d(:,i_species))
             mass_plume_diff = mass_plume_1D - mass_plume_2D
-            IF(ABS(D_mass_plume/mass_plume)>0.01)THEN
+            IF(ABS(mass_plume_diff/mass_plume_2D)>0.01)THEN
                Write (6, *) "Debug (BZ): More than 1% mass lost from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
                      "Species: ", TRIM(spc_names_p_use(i_species)), 'mass_plume_2D= ', mass_plume_2D, &
                      'mass_plume_1D= ', mass_plume_1D
