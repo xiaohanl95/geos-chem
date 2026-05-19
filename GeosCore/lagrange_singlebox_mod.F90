@@ -1123,6 +1123,7 @@ CONTAINS
       CALL plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
       ! Plume structure evolution:
       ! 2D to 1D
+      ! 1D seg splitting
       ! Dissolve when meet the criteria 
 
       ! write diagnostic output
@@ -1296,6 +1297,7 @@ CONTAINS
   real(fp)               :: Pdx, Pdy, Pdt
   REAL(fp)               :: box_lon, box_lat, box_lev                          
   real(fp)               :: box_length, box_alpha, box_theta
+  REAL(fp)               :: box_Ra, box_Rb
   real(fp)               :: box_life
   REAL(fp)               :: box_x_PS, box_y_PS
   real(fp)               :: box_u, box_v, box_omeg
@@ -1337,7 +1339,7 @@ CONTAINS
   
 
   REAL(fp), dimension(:,:,:), allocatable :: box_concnt_2D
-  !real(fp), dimension(:,:), allocatable :: box_concnt_1D
+  REAL(fp), dimension(:,:), allocatable :: box_concnt_1D
   REAL(fp), POINTER      :: u(:,:,:)
   REAL(fp), POINTER      :: v(:,:,:)
   REAL(fp), POINTER      :: omeg(:,:,:)
@@ -1350,7 +1352,7 @@ CONTAINS
 
   TYPE(SpcConc), POINTER        :: Spc(:)
   TYPE(Plume2d_list), POINTER :: Plume2d_new, Plume2d_curr, Plume2d_prev
-  !TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d_curr, Plume1d_prev
+  TYPE(Plume1d_list), POINTER :: Plume1d_new, Plume1d_curr, Plume1d_prev
 
 
   
@@ -1382,9 +1384,11 @@ CONTAINS
   RC     =  GC_SUCCESS
   ErrMsg = ''
   NULLIFY(Plume2d_new, Plume2d_curr, Plume2d_prev)
+  NULLIFY(Plume1d_new, Plume1d_curr, Plume1d_prev)
   !IF(Stop_inject==1) GOTO 400 ! deallocate and nullify -> exit
   
   ALLOCATE(box_concnt_2D(n_x_max, n_y_max, nspc_p )) !
+  ALLOCATE(box_concnt_1D(n_slab_max, nspc_p ))
 
   RK_Dt(1) = 0.0
   RK_Dt(2) = 0.5*Dt
@@ -2193,8 +2197,8 @@ CONTAINS
     IF(Plume2d_curr%LIFE>4.0*3600.0)THEN
       Xscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO4_p), Pdx, Pdy, frac_mass, 2)
       Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO4_p), Pdx, Pdy, frac_mass, 1)
-      box_theta = ATAN( Xscale/Yscale )
-      IF ((Xscale/Yscale .gt. 25.0_fp) .OR.(Plume2d_curr%LIFE > Critical_day_2D * 3600.0_fp)) THEN
+      ! box_theta = ATAN( Xscale/Yscale )
+      IF ((Xscale/Yscale .gt. 25.0_fp) .OR.(Plume2d_curr%LIFE > Critical_day_2D * 3600.0_fp * 24.0_fp)) THEN
          Plume2d_curr%IsTransfer = .True.
 
       ENDIF 
@@ -2211,9 +2215,282 @@ CONTAINS
   ! For 1d plume: Run Lagrangian trajectory-track HERE
   !=======================================================================
   IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
+  Plume1d_curr => Plume1d_head
+  DO WHILE(ASSOCIATED(Plume1d_curr))
+    box_lon    = Plume1d_curr%LON
+    box_lat    = Plume1d_curr%LAT
+    box_lev    = Plume1d_curr%LEV
+    i_lat      = Plume1d_curr%lat_ind
+    i_lon      = Plume1d_curr%lon_ind
+    i_lev      = Plume1d_curr%lev_ind
+
+    box_length = Plume1d_curr%LENGTH
+    box_alpha  = Plume1d_curr%ALPHA
+    box_label  = Plume1d_curr%label
+    box_life   = Plume1d_curr%LIFE
+    box_Ra    = Plume1d_curr%RA
+    box_Rb    = Plume1d_curr%RB
+    box_concnt_1D = Plume1d_curr%CONCNT1d
+
+    box_life = box_life + Dt
+
+    curr_lon      = box_lon
+    curr_lat      = box_lat
+    curr_pressure = box_lev
+
+    DO Ki = 1,4,1
+      !------------------------------------------------------------------
+      ! For vertical wind speed:
+      ! pay attention for the polar region * * *
+      !------------------------------------------------------------------
+      if(abs(curr_lat)>Y_mid(NY_GC))then
+         curr_omeg = Interplt_wind_RLL_polar(omeg, i_lon, i_lat, i_lev, &
+                                       curr_lon, curr_lat, curr_pressure)
+      else
+         curr_omeg = Interplt_wind_RLL(omeg, i_lon, i_lat, i_lev, &
+                                       curr_lon, curr_lat, curr_pressure)
+      endif
+
+      RK_omeg(Ki) = curr_omeg
+      RK_Dlev(Ki)   = Dt * curr_omeg / 100.0     ! Pa => hPa
+      curr_pressure = box_lev + RK_Dt(Ki+1) * curr_omeg / 100.0
+
+      if(curr_pressure<P_mid(NZ_GC)) &
+            curr_pressure = P_mid(NZ_GC) !+ ( P_mid(LLPAR) - curr_pressure )
+      if(curr_pressure>P_mid(1)) &
+            curr_pressure = P_mid(1) !- ( curr_pressure - P_mid(1) )
+      !------------------------------------------------------------------
+      ! For the region where lat<72, use Regualr Longitude-Latitude Mesh:
+      !------------------------------------------------------------------
+      if(abs(curr_lat)<=72.0)then
+         curr_u = Interplt_wind_RLL(u, i_lon, i_lat, i_lev, curr_lon, &
+                                                  curr_lat, curr_pressure)
+         curr_v = Interplt_wind_RLL(v, i_lon, i_lat, i_lev, curr_lon, &
+                                                  curr_lat, curr_pressure)
+         RK_u(Ki) = curr_u
+         RK_v(Ki) = curr_v
+         dbox_lon  = (RK_Dt(Ki+1)*curr_u) &
+                        / (2.0*PI*Re*COS(box_lat*PI/180.0)) * 360.0
+         dbox_lat  = (RK_Dt(Ki+1)*curr_v) / (PI*Re) * 180.0
+         curr_lon  = box_lon + dbox_lon
+         curr_lat  = box_lat + dbox_lat
+
+         RK_Dlon(Ki) = (Dt*curr_u) &
+                      / (2.0*PI*Re*COS(box_lat*PI/180.0)) * 360.0
+         RK_Dlat(Ki) = (Dt*curr_v) / (PI*Re) * 180.0
+      endif
+
+      !------------------------------------------------------------------
+      ! For the polar region (lat>=72), use polar sterographic
+      !------------------------------------------------------------------
+       if(abs(curr_lat)>72.0)then
+
+         if(abs(curr_lat)>Y_mid(NY_GC))then
+         curr_u_PS = Interplt_uv_PS_polar(1, u, v, i_lon, i_lat, i_lev, &
+                                        curr_lon, curr_lat, curr_pressure)
+         curr_v_PS = Interplt_uv_PS_polar(0, u, v, i_lon, i_lat, i_lev, &
+                                        curr_lon, curr_lat, curr_pressure)
+         else
+         curr_u_PS = Interplt_uv_PS(1, u, v, i_lon, i_lat, i_lev, &
+                                        curr_lon, curr_lat, curr_pressure) 
+         curr_v_PS = Interplt_uv_PS(0, u, v, i_lon, i_lat, i_lev, &
+                                        curr_lon, curr_lat, curr_pressure) 
+         endif
+
+         RK_u(Ki) = curr_u_PS
+         RK_v(Ki) = curr_v_PS
+         dbox_x_PS = RK_Dt(Ki+1)*curr_u_PS
+         dbox_y_PS = RK_Dt(Ki+1)*curr_v_PS
+         RK_Dx_PS = Dt*curr_u_PS
+         RK_Dy_PS = Dt*curr_v_PS
+
+         !------------------------------------------------------------------
+         ! change from (lon,lat) in RLL to (x,y) in PS: 
+         !------------------------------------------------------------------
+         if(box_lat<0)then
+           box_x_PS = -1.0* Re* COS(box_lon*PI/180.0) &
+                                / TAN(box_lat*PI/180.0)
+           box_y_PS = -1.0* Re* SIN(box_lon*PI/180.0) &
+                                / TAN(box_lat*PI/180.0)
+         else
+           box_x_PS = Re* COS(box_lon*PI/180.0) &
+                        / TAN(box_lat*PI/180.0)
+           box_y_PS = Re* SIN(box_lon*PI/180.0) &
+                        / TAN(box_lat*PI/180.0)
+         endif
+
+         RK_x_PS  = box_x_PS + RK_Dx_PS
+         RK_y_PS  = box_y_PS + RK_Dy_PS
+
+         box_x_PS  = box_x_PS + dbox_x_PS
+         box_y_PS  = box_y_PS + dbox_y_PS
+
+         !------------------------------------------------------------------
+         ! change from (x,y) in PS to (lon,lat) in RLL
+         !------------------------------------------------------------------
+         if(box_x_PS>0.0)then
+           curr_lon = ATAN( box_y_PS / box_x_PS )*180.0/PI
+         endif
+         if(box_x_PS<0.0 .and. box_y_PS<=0.0)then
+           curr_lon = ATAN( box_y_PS / box_x_PS )*180.0/PI -180.0
+         endif
+         if(box_x_PS<0.0 .and. box_y_PS>0.0)then
+           curr_lon = ATAN( box_y_PS / box_x_PS )*180.0/PI +180.0
+         endif
+
+         if(curr_lat<0.0)then
+           curr_lat= -1* ATAN( Re/SQRT(box_x_PS**2+box_y_PS**2) ) *180.0/PI
+         else
+           curr_lat= ATAN( Re / SQRT(box_x_PS**2+box_y_PS**2) ) *180.0/PI
+         endif
+         !------------------------------------------------------------------
+         ! For 4th order Runge Kutta
+         !------------------------------------------------------------------
+         if(RK_x_PS>0.0)then
+           RK_lon = ATAN( RK_y_PS / RK_x_PS )*180.0/PI
+         endif
+         if(RK_x_PS<0.0 .and. RK_y_PS<=0.0)then
+           RK_lon = ATAN( RK_y_PS / RK_x_PS )*180.0/PI -180.0
+         endif
+         if(RK_x_PS<0.0 .and. RK_y_PS>0.0)then
+           RK_lon = ATAN( RK_y_PS / RK_x_PS )*180.0/PI +180.0
+         endif
+         if(box_lat<0.0)then
+           RK_lat = -1 * ATAN( Re / SQRT(RK_x_PS**2+RK_y_PS**2) ) *180.0/PI
+         else
+           RK_lat = ATAN( Re / SQRT(RK_x_PS**2+RK_y_PS**2) ) *180.0/PI
+         endif
+
+         RK_Dlon(Ki) = RK_lon - box_lon
+         RK_Dlat(Ki) = RK_lat - box_lat
+
+       endif ! if(abs(curr_lat)>72.0)then
+
+      ENDDO ! Ki = 1,4,1
+
+      box_lon = box_lon + &
+                (RK_Dlon(1)+2.0*RK_Dlon(2)+2.0*RK_Dlon(3)+RK_Dlon(4))/6.0
+      box_lat = box_lat + &
+                (RK_Dlat(1)+2.0*RK_Dlat(2)+2.0*RK_Dlat(3)+RK_Dlat(4))/6.0
+      box_lev = box_lev + &
+                (RK_Dlev(1)+2.0*RK_Dlev(2)+2.0*RK_Dlev(3)+RK_Dlev(4))/6.0
+      ! make sure the location is not out of range
+      do while (box_lat > Y_edge(NY_GC+1))
+         box_lat = Y_edge(NY_GC+1) - ( box_lat-Y_edge(NY_GC+1) )
+      end do
+      do while (box_lat < Y_edge(1))
+         box_lat = Y_edge(1) + ( box_lat-Y_edge(1) )
+      end do
+      do while (box_lon > X_edge(NX_GC+1))
+         box_lon = box_lon - 360.0
+      end do
+      do while (box_lon < X_edge(1))
+         box_lon = box_lon + 360.0
+      end do
+      box_u    = ( RK_u(1) + 2.0*RK_u(2) &
+                         + 2.0*RK_u(3) + RK_u(4) ) / 6.0
+      box_v    = ( RK_v(1) + 2.0*RK_v(2) &
+                         + 2.0*RK_v(3) + RK_v(4) ) / 6.0
+      box_omeg = ( RK_omeg(1) + 2.0*RK_omeg(2) &
+                         + 2.0*RK_omeg(3) + RK_omeg(4) ) / 6.0
+      !--------------------------------------------------------------------
+      ! interpolate temperature for plume volumn change 
+      ! (PV=nRT):
+      !--------------------------------------------------------------------
+      if(abs(curr_lat)>Y_mid(NY_GC))then
+         curr_T1 = Interplt_wind_RLL_polar(T1, i_lon, i_lat, &
+                                 i_lev, curr_lon, curr_lat, curr_pressure)
+      else
+         curr_T1 = Interplt_wind_RLL(T1, i_lon, i_lat, i_lev, &
+                                        curr_lon, curr_lat, curr_pressure)
+      endif
+
+      ! update index based on new location
+      i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
+      if(i_lon>NX_GC) i_lon=i_lon-NX_GC
+      if(i_lon<1) i_lon=i_lon+NX_GC
+
+      i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
+      if(i_lat>NY_GC) i_lat=NY_GC
+      if(i_lat<1) i_lat=1
+
+      i_lev = Find_iPLev(box_lev,P_edge)
+      if(i_lev>NZ_GC) i_lev=NZ_GC
+
+      if(abs(box_lat)>Y_mid(NY_GC))then
+         next_T2 = Interplt_wind_RLL_polar(T2, i_lon, i_lat, i_lev, &
+                           box_lon, box_lat, box_lev)
+      else
+         next_T2 = Interplt_wind_RLL(T2, i_lon, i_lat, i_lev, &
+                           box_lon, box_lat, box_lev)
+      endif
+
+      ! PV=nRT, V2 = T2/P2 : T1/P1 * V1
+      ratio = SQRT( (next_T2/box_lev)/(curr_T1/curr_pressure) )
+
+      ! assume the volume change mainly apply to the cross-section, 
+      ! the box_length would not change 
+
+      V_prev = box_Ra*box_Rb*box_length*1.0e+6_fp
+      V_new = V_prev * ratio * ratio
+      box_Ra = box_Ra *ratio
+      box_Rb = box_Rb *ratio
+
+      box_concnt_1D(:,:) = box_concnt_1D(:,:)*V_prev/V_new
+
+      !------------------------------------------------------------------
+      ! calcualte the box_alpha [0,2*PI)
+      !------------------------------------------------------------------
+      if((box_u**2+box_v**2)==0)then
+          box_alpha = 0.0
+      else
+        IF(box_v>=0)THEN
+          box_alpha = ACOS( box_u/SQRT(box_u**2+box_v**2) )
+        ELSE
+          box_alpha = 2*PI - ACOS( box_u/SQRT(box_u**2+box_v**2) )
+        ENDIF
+      endif
+      !------------------------------------------------------------------
+      ! calcualte the Lyaponov exponent (Ly), unit: s-1
+      !------------------------------------------------------------------
+      Ly = Calc_Ly(u, v, i_lon, i_lat, i_lev, box_alpha, box_lon, box_lat)
+      !------------------------------------------------------------------
+      ! Horizontal stretch:
+      ! Adjust the length/radius of box based on Lyaponov exponent (Ly)
+      !------------------------------------------------------------------
+      length0           = box_length
+      box_length = EXP(Ly*Dt) * length0
+      box_Ra = box_Ra*SQRT(length0/box_length)
+      box_Rb = box_Rb*SQRT(length0/box_length)
+      ! ----------------------------------------------------------------
+      ! update     
+      ! ----------------------------------------------------------------
+      Plume1d_curr%LON    = box_lon
+      Plume1d_curr%LAT    = box_lat
+      Plume1d_curr%LEV    = box_lev
+      Plume1d_curr%lon_ind = i_lon
+      Plume1d_curr%lat_ind = i_lat
+      Plume1d_curr%lev_ind = i_lev
+
+      Plume1d_curr%LENGTH = box_length
+      Plume1d_curr%ALPHA  = box_alpha
+      Plume1d_curr%label  = box_label
+      Plume1d_curr%LIFE   = box_life
+      Plume1d_curr%RA     = box_Ra
+      Plume1d_curr%RB     = box_Rb
+
+      Plume1d_curr%CONCNT1d = box_concnt_1D
+      ! --------------------------------------------------------------
+      ! Decide if this plume will be dissolve
+      ! Location + lifetime
+      ! --------------------------------------------------------------
+      IF ((box_lev>TROPP(i_lon,i_lat).AND.(TROPP_sink)).OR.(box_life>Critical_day_1D * 3600.0_fp*24.0_fp )) THEN
+         Plume1d_curr%IsDissolve = .True.
+      ENDIF
+      Plume1d_curr => Plume1d_curr%next
+  ENDDO
 
 400 CONTINUE
-  
   !------------------------------------------------------------------
   ! Everything is done, clean up pointers
   !------------------------------------------------------------------
@@ -2240,7 +2517,7 @@ CONTAINS
   IF(ASSOCIATED(Plume2d_curr)) nullify(Plume2d_curr)
   IF(ASSOCIATED(Plume2d_prev)) nullify(Plume2d_prev)
   !IF(ASSOCIATED(Plume1d_new)) nullify(Plume1d_new)
-  !IF(ASSOCIATED(Plume1d_curr)) nullify(Plume1d_curr)
+  IF(ASSOCIATED(Plume1d_curr)) nullify(Plume1d_curr)
   !IF(ASSOCIATED(Plume1d_prev)) nullify(Plume1d_prev)
 
   END SUBROUTINE plume_physics
