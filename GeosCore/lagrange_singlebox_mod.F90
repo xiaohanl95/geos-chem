@@ -117,28 +117,34 @@ MODULE Lagrange_singlebox_Mod
   INTEGER               :: nspc_GC ! Num of species in GEOS-Chem
   INTEGER               :: nspc_p ! Num of species in Plume
   INTEGER               :: nBins  ! Number of TOMAS bins
-  INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
-  INTEGER               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
-  REAL(fp)		          :: Entropy0	 ! perfect entropy without diffusion
+  !INTEGER               :: Volume_Sort  = 1 ! 1 = use SortList() function, transfer largest (not oldest) plume segment for volume criterion
+  !INTEGER               :: Calc_entropy = 1 ! 1 = turn on entropy calculation
+  !REAL(fp)		          :: Entropy0	 ! perfect entropy without diffusion
   INTEGER               :: NX_GC, NY_GC, NZ_GC
   INTEGER               :: n_x_mid, n_y_mid, n_x_mid2, n_y_mid2 
   INTEGER               :: n_x_max2, n_y_max2 
   INTEGER               :: n_slab_25, n_slab_50, n_slab_75
   INTEGER               :: n_slab_max, n_slab_max2
   INTEGER               :: N_parcel   ! 131        
-  INTEGER               :: Num_inject, Num_Plume2d, Num_Plume1d, Num_dissolve     
+  INTEGER               :: Num_inject, Num_Plume2d, Num_Plume1d, Num_Plume1d_new, Num_dissolve_2D, Num_dissolve_1D     
   INTEGER               :: tt 
   INTEGER               :: N_total
   INTEGER               :: Stop_inject ! 1: stop injecting; 0: keep injecting
-  INTEGER               :: File_Smass_IU ! Diagnostic file nums, initialized in lagr_init
-  INTEGER               :: File_spc_init_IU ! Diagnostic file nums, initialized in lagr_init
-  INTEGER               :: File_SF_bin_IU ! Diagnostic file nums, initialized in lagr_init_tomas
-  INTEGER               :: File_MK_bin_IU ! Diagnostic file nums, initialized in lagr_init_tomas
-  INTEGER               :: File_NK_bin_IU ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_Smass_IU_2D ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_spc_init_IU_2D ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_SF_bin_IU_2D ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_MK_bin_IU_2D ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_NK_bin_IU_2D ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_Smass_IU_1D ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_spc_init_IU_1D ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_SF_bin_IU_1D ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_MK_bin_IU_1D ! Diagnostic file nums, initialized in lagr_init_tomas
+  INTEGER               :: File_NK_bin_IU_1D ! Diagnostic file nums, initialized in lagr_init_tomas
   
 
-  REAL(fp)              :: DX, DY
+  REAL(fp)              :: DX_GC, DY_GC
   REAL(fp)              :: Length_lat
+  REAL(fp)              :: time_elapsed
   REAL(fp), POINTER     :: X_mid(:), Y_mid(:), P_mid(:)
   REAL(fp), POINTER     :: P_edge(:)
   REAL(fp), POINTER     :: X_edge(:), Y_edge(:)
@@ -156,33 +162,47 @@ MODULE Lagrange_singlebox_Mod
   ! _1: mass in plume after injection
   ! _2: mass in Plume after Physical processes
   ! _3: mass in Plume after Chemical processes
-  REAL(fp) 		          :: mass_S_SO2_inj,   mass_S_SO2_r1,   mass_S_SO2_r2 
-  REAL(fp) 		          :: mass_S_SO2_1,     mass_S_SO2_2,    mass_S_SO2_3
-  REAL(fp) 		          :: mass_S_SO4_inj,   mass_S_SO4_r1,   mass_S_SO4_r2 
-  REAL(fp) 		          :: mass_S_SO4_1,     mass_S_SO4_2,    mass_S_SO4_3
-  
+  REAL(fp) 		          :: mass_S_SO2_inj_2D,   mass_S_SO2_r1_2D,   mass_S_SO2_r2_2D 
+  REAL(fp) 		          :: mass_S_SO2_1_2D,     mass_S_SO2_2_2D,    mass_S_SO2_3_2D
+  REAL(fp) 		          :: mass_S_SO4_inj_2D,   mass_S_SO4_r1_2D,   mass_S_SO4_r2_2D 
+  REAL(fp) 		          :: mass_S_SO4_1_2D,     mass_S_SO4_2_2D,    mass_S_SO4_3_2D
+  REAL(fp) 		          :: mass_S_SO2_inj_1D,   mass_S_SO2_r1_1D,   mass_S_SO2_r2_1D 
+  REAL(fp) 		          :: mass_S_SO2_1_1D,     mass_S_SO2_2_1D,    mass_S_SO2_3_1D
+  REAL(fp) 		          :: mass_S_SO4_inj_1D,   mass_S_SO4_r1_1D,   mass_S_SO4_r2_1D 
+  REAL(fp) 		          :: mass_S_SO4_1_1D,     mass_S_SO4_2_1D,    mass_S_SO4_3_1D
+  REAL(fp) 		          :: mass_S_H2SO4_2D,     mass_S_H2SO4_1D 
+
   ! Variables to track initial mass read in plume (in molec), all tracers
-  REAL(fp), ALLOCATABLE :: mass_spc_init(:)
+  REAL(fp), ALLOCATABLE :: mass_spc_init_2D(:)
+  REAL(fp), ALLOCATABLE :: mass_spc_init_1D(:)
 
   ! Variables to track tomas SF tracer (in molec), SF only
-  REAL(fp), ALLOCATABLE :: mass_SF_bin(:)
+  REAL(fp), ALLOCATABLE :: mass_SF_bin_2D(:)
+  REAL(fp), ALLOCATABLE :: mass_SF_bin_1D(:)
   ! Variables to track tomas NK tracer (in molec)
-  REAL(fp), ALLOCATABLE :: mass_NK_bin(:)
+  REAL(fp), ALLOCATABLE :: mass_NK_bin_2D(:)
+  REAL(fp), ALLOCATABLE :: mass_NK_bin_1D(:)
   ! Variables to track tomas total tracer (in molec), all tracer, for this case, mainly SF, NH4 and AW
-  REAL(fp), ALLOCATABLE :: mass_MK_bin(:)
+  REAL(fp), ALLOCATABLE :: mass_MK_bin_2D(:)
+  REAL(fp), ALLOCATABLE :: mass_MK_bin_1D(:)
 
   ! Diagnostic file names, initialized in lagr_init
-  CHARACTER(LEN=255)    :: file_Smass
-  CHARACTER(LEN=255)    :: file_SF_bin ! file to track tomas sf tracer
-  CHARACTER(LEN=255)    :: file_NK_bin ! file to track tomas nk tracer
-  CHARACTER(LEN=255)    :: file_MK_bin ! file to track tomas Mk tracer (all tracer include water)
-  CHARACTER(LEN=255)    :: file_spc_init
+  CHARACTER(LEN=255)    :: file_Smass_2D
+  CHARACTER(LEN=255)    :: file_SF_bin_2D ! file to track tomas sf tracer
+  CHARACTER(LEN=255)    :: file_NK_bin_2D ! file to track tomas nk tracer
+  CHARACTER(LEN=255)    :: file_MK_bin_2D ! file to track tomas Mk tracer (all tracer include water)
+  CHARACTER(LEN=255)    :: file_spc_init_2D
+  CHARACTER(LEN=255)    :: file_Smass_1D
+  CHARACTER(LEN=255)    :: file_SF_bin_1D ! file to track tomas sf tracer
+  CHARACTER(LEN=255)    :: file_NK_bin_1D ! file to track tomas nk tracer
+  CHARACTER(LEN=255)    :: file_MK_bin_1D ! file to track tomas Mk tracer (all tracer include water)
+  CHARACTER(LEN=255)    :: file_spc_init_1D
 
   ! some parameter for sensitive test
   INTEGER, PARAMETER        :: N1_split           = 5            ! Cross-section splitting
   INTEGER, PARAMETER        :: N2_split           = 5            ! length splitting
-  INTEGER, PARAMETER        :: Split_length       = 1            ! how many times of DX
-  REAL(fp), PARAMETER       :: Dissolve_critiria  = 10*0.01
+  INTEGER, PARAMETER        :: Split_length       = 1            ! how many times of DX_GC
+  REAL(fp), PARAMETER       :: Dissolve_criteria  = 10*0.01
   REAL(fp), PARAMETER       :: Volume_percent     = 30*0.01
   REAL(fp), PARAMETER       :: frac_mass = 0.95   ! fraction of tracer accumulated along the horizontal and verticle length scale
   ! REAL(fp), PARAMETER       :: Critical_day       = 28.0         ! [day] ! Move this into geoschem_config.yml
@@ -193,11 +213,11 @@ MODULE Lagrange_singlebox_Mod
 
   !-------------------------------------------------------------
   ! Some parameters to be retired 
-  integer               :: id_PASV_LA3, id_PASV_LA2, id_PASV_LA 
-  integer               :: id_PASV_EU2, id_PASV_EU
-  integer, parameter    :: i_tracer  = 1
-  integer, parameter    :: i_product = 2
-  real(fp), parameter       :: Kchem = 1.0e-20_fp ! chemical reaction rate
+  !integer               :: id_PASV_LA3, id_PASV_LA2, id_PASV_LA 
+  !integer               :: id_PASV_EU2, id_PASV_EU
+  !integer, parameter    :: i_tracer  = 1
+  !integer, parameter    :: i_product = 2
+  !real(fp), parameter       :: Kchem = 1.0e-20_fp ! chemical reaction rate
   ! use Kchem = 1.0e-20_fp for >1 year simulation
   !-------------------------------------------------------------
 
@@ -273,15 +293,18 @@ CONTAINS
     Num_inject         =    0
     Num_Plume2d        =    0
     Num_Plume1d        =    0
-    Num_dissolve       =    0
+    Num_Plume1d_new    =    0
+    Num_dissolve_2D    =    0
+    Num_dissolve_1D    =    0
+    time_elapsed       =    0.0_fp
 
     nspc_GC            =              State_Chm%nSpecies
     nspc_p             =              nspc_p_bulk
     NX_GC              =              State_Grid%NX
     NY_GC              =              State_Grid%NY
     NZ_GC              =              State_Grid%NZ
-    DX                 =              State_Grid%DX
-    DY                 =              State_Grid%DY
+    DX_GC              =              State_Grid%DX
+    DY_GC              =              State_Grid%DY
     X_edge             =>             State_Grid%XEdge(:,1) 
     Y_edge             =>             State_Grid%YEdge(1,:)
     P_edge             =>             State_Met%PEDGE(1,1,:) 
@@ -291,7 +314,7 @@ CONTAINS
     Y_mid              =>             State_Grid%YMid(1,:) ! Grid box latitude center [degree] ! YMID(1,:,1)
     P_mid              =>             State_Met%PMID(1,1,:)  ! Pressure at level centers (hPa)
    
-    Write (6, *) "Debug: (BZ) Num of reactions from KPP is: ", NREACT
+    !Write (6, *) "Debug: (BZ) Num of reactions from KPP is: ", NREACT
     Write (6, *) "Debug: (BZ) Num of species in plume is : ", nspc_p
     ! create species name database
     ALLOCATE( spc_names_p_use(nspc_p), STAT=RC )
@@ -322,9 +345,15 @@ CONTAINS
         CALL ERROR_STOP( errMsg, thisLoc)
         RETURN
     ENDIF
-    ALLOCATE( mass_spc_init(10 + nspc_p_tomas_tracer * nBins), STAT=RC )
+    ALLOCATE( mass_spc_init_2D(10 + nspc_p_tomas_tracer * nBins), STAT=RC )
     IF (RC /= 0) THEN
-        errMsg = 'Error allocating mass_spc_init'
+        errMsg = 'Error allocating mass_spc_init_2D'
+        CALL ERROR_STOP( errMsg, thisLoc)
+        RETURN
+    ENDIF
+    ALLOCATE( mass_spc_init_1D(10 + nspc_p_tomas_tracer * nBins), STAT=RC )
+    IF (RC /= 0) THEN
+        errMsg = 'Error allocating mass_spc_init_1D'
         CALL ERROR_STOP( errMsg, thisLoc)
         RETURN
     ENDIF
@@ -396,28 +425,36 @@ CONTAINS
     n_slab_max                 =      (INT(n_y_max/4)+1)*4 ! close to n_y_max, number of slabs in 1D
     n_slab_max2                =      n_slab_max+2
 
-    !mass_S_SO2_b               =      0.0_fp
-    mass_S_SO2_1               =      0.0_fp
-    mass_S_SO2_2               =      0.0_fp
-    mass_S_SO2_3               =      0.0_fp
-    !mass_S_SO2_4               =      0.0_fp
-    mass_S_SO2_inj             =      0.0_fp
-    mass_S_SO2_r1              =      0.0_fp
-    mass_S_SO2_r2              =      0.0_fp
+   
+    mass_S_SO2_1_2D               =      0.0_fp
+    mass_S_SO2_2_2D               =      0.0_fp
+    mass_S_SO2_3_2D               =      0.0_fp
+    mass_S_SO2_inj_2D             =      0.0_fp
+    mass_S_SO2_r1_2D              =      0.0_fp
+    mass_S_SO2_r2_2D              =      0.0_fp
     
-    !mass_S_SO4_b               =      0.0_fp
-    mass_S_SO4_1               =      0.0_fp
-    mass_S_SO4_2               =      0.0_fp
-    mass_S_SO4_3               =      0.0_fp
-    !mass_S_SO4_4               =      0.0_fp
-    mass_S_SO4_inj             =      0.0_fp
-    mass_S_SO4_r1              =      0.0_fp
-    mass_S_SO4_r2              =      0.0_fp
+    mass_S_SO4_1_2D               =      0.0_fp
+    mass_S_SO4_2_2D               =      0.0_fp
+    mass_S_SO4_3_2D               =      0.0_fp
+    mass_S_SO4_inj_2D             =      0.0_fp
+    mass_S_SO4_r1_2D              =      0.0_fp
+    mass_S_SO4_r2_2D              =      0.0_fp
 
-    !mass_S_SO2_1_1             =      0.0_fp
-    !mass_S_SO4_1_1             =      0.0_fp
-    !mass_S_SO2_1_2             =      0.0_fp
-    !mass_S_SO4_1_2             =      0.0_fp
+    mass_S_SO2_1_1D               =      0.0_fp
+    mass_S_SO2_2_1D               =      0.0_fp
+    mass_S_SO2_3_1D               =      0.0_fp
+    mass_S_SO2_inj_1D             =      0.0_fp
+    mass_S_SO2_r1_1D              =      0.0_fp
+    mass_S_SO2_r2_1D              =      0.0_fp
+    
+    mass_S_SO4_1_1D               =      0.0_fp
+    mass_S_SO4_2_1D               =      0.0_fp
+    mass_S_SO4_3_1D               =      0.0_fp
+    mass_S_SO4_inj_1D             =      0.0_fp
+    mass_S_SO4_r1_1D              =      0.0_fp
+    mass_S_SO4_r2_1D              =      0.0_fp
+
+    
 
     Dt = GET_TS_DYN()
     N_parcel = NINT(Aircraft_speed * Dt / Length_init)
@@ -442,161 +479,57 @@ CONTAINS
     ENDIF
 
     ! Creat file for sulfur mass diag
-    File_Smass_IU = findFreeLun()
-    file_Smass   = 'Plume_Sulfur_mass.txt'
-    OPEN( File_Smass_IU, FILE=TRIM( file_Smass ), STATUS='REPLACE', &
+    File_Smass_IU_2D = findFreeLun()
+    file_Smass_2D   = 'Plume_Sulfur_mass_2D.txt'
+    OPEN( File_Smass_IU_2D, FILE=TRIM( file_Smass_2D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
-    CLOSE(File_Smass_IU)
+    ! Return if there was an error opening the file
+    IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ErrMsg  = 'create Plume_Sulfur_mass_2D.txt (in lagrange_init_box)'
+        CALL ERROR_STOP( ERRMSG, ThisLoc )
+        RETURN
+    ENDIF
+    CLOSE(File_Smass_IU_2D)
 
-    File_spc_init_IU = findFreeLun()
-    file_spc_init = 'Plume_species_initial.txt'
-    OPEN( File_spc_init_IU, FILE=TRIM( file_spc_init ), STATUS='REPLACE', &
+    ! Creat file for sulfur mass diag
+    File_Smass_IU_1D = findFreeLun()
+    file_Smass_1D   = 'Plume_Sulfur_mass_1D.txt'
+    OPEN( File_Smass_IU_1D, FILE=TRIM( file_Smass_1D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
-    CLOSE(File_spc_init_IU)
+    ! Return if there was an error opening the file
+    IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ErrMsg  = 'create Plume_Sulfur_mass_1D.txt (in lagrange_init_box)'
+        CALL ERROR_STOP( ERRMSG, ThisLoc )
+        RETURN
+    ENDIF
+    CLOSE(File_Smass_IU_1D)
+
+    File_spc_init_IU_1D = findFreeLun()
+    file_spc_init_1D = 'Plume_species_initial_1D.txt'
+    OPEN( File_spc_init_IU_1D, FILE=TRIM( file_spc_init_1D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    ! Return if there was an error opening the file
+    IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ErrMsg  = 'create Plume_species_initial_1D.txt (in lagrange_init_box)'
+        CALL ERROR_STOP( ErrMsg, ThisLoc )
+        RETURN
+    ENDIF
+    CLOSE(File_spc_init_IU_1D)
 
     
-    ! Return if there was an error opening the file
-    ! IF ( IOS /= 0 ) THEN
-        ! Define error message
-        ! ERRMSG  = 'create sulfur mass file (in lagrange_init_box)'
-    !   CALL GC_Error( ERRMSG, RC, ThisLoc )
-    !   RETURN
-    ! ENDIF
-
-    ! Convert unit from mol/mol dry to kg/kg dry to molec/cm3
-    ! unit is mol/mol dry, first convert mol/mol dry to kg/kg dry
-    !CALL Convert_Spc_Units(                                            &
-    !            Input_Opt      = Input_Opt,                                   &
-    !            State_Chm      = State_Chm,                                   &
-    !            State_Grid     = State_Grid,                                  &
-    !            State_Met      = State_Met,                                   &
-    !            new_units      = KG_SPECIES_PER_KG_DRY_AIR,                   &
-    !            previous_units = previous_units,                              &
-    !            RC             = RC                                          )
-    ! then convert kg/kg dry to molec/cm3, because no direct conversion from mol/mol to molec/cm3
-    !CALL Convert_Spc_Units(                                            &
-    !            Input_Opt      = Input_Opt,                                   &
-    !            State_Chm      = State_Chm,                                   &
-    !            State_Grid     = State_Grid,                                  &
-    !            State_Met      = State_Met,                                   &
-    !            new_units      = MOLECULES_SPECIES_PER_CM3,                   &
-    !            previous_units = previous_units_temp,                              &
-    !            RC             = RC                                          )
-    !WRITE(6,'(a)') 'debug in plume_initialization: before initialization, the new unit is ' // TRIM(UNIT_STR(previous_units))
-    !WRITE(6,'(a)') 'debug in plume_initialization: during initialization, the new unit is ' // TRIM(UNIT_STR(State_Chm%Species(1)%Units))
-    ! Check that species units are in  molec/cm3
-    !id_SO4= Ind_('SO4')
-    !IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
-    !  ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
-      !CALL GC_Error( ErrMsg, RC, ThisLoc )
-    !   CALL ERROR_STOP (ErrMsg, ThisLoc)
-    !ENDIF
-    ! Read injection location at the first time step, always start from lat1
-    !curr_lon    =  Plume_sources(1)%lon
-    !curr_lat    =  Plume_sources(1)%lat1
-    !curr_lev    =  Plume_sources(1)%lev
-    !i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
-    !if(i_lon>NX_GC) i_lon=i_lon-NX_GC
-    !if(i_lon<1) i_lon=i_lon+NX_GC
-    !WRITE(6,*) 'debug: ilon=', i_lon
-    !i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
-    !if(i_lat>NY_GC) i_lat=NY_GC
-    !if(i_lat<1) i_lat=1
-    !WRITE(6,*) 'debug: ilat=', i_lat
-    !i_lev = Find_iPLev(curr_lev,P_edge)
-    !WRITE(6,*) 'debug: ilev1=', i_lev
-    !if(i_lev>NZ_GC) i_lev=NZ_GC
-
-    !IF (use_lagrange) THEN
-      
-      !! Initialize the first plume segment
-      !ALLOCATE(Plume2d_tail)
-      !Plume2d_tail%IsNew = 1
-      !Plume2d_tail%label = 1
-      !Plume2d_tail%active_x_min = 1
-      !Plume2d_tail%active_x_max = n_x_max
-      !Plume2d_tail%active_y_min = 1
-      !Plume2d_tail%active_y_max = n_y_max
-      !Plume2d_tail%lat_ind = i_lat
-      !Plume2d_tail%lon_ind = i_lon
-      !Plume2d_tail%lev_ind = i_lev
-
-      !Plume2d_tail%LON = Inject_lon
-      !Plume2d_tail%LAT = -29.95e+0_fp
-      !Plume2d_tail%LEV = Inject_hPa
-      !Plume2d_tail%LON   = Plume_sources(1)%lon
-      !Plume2d_tail%LAT   = Plume_sources(1)%lat1
-      !Plume2d_tail%LEV   = Plume_sources(1)%lev
-
-      !Plume2d_tail%ALPHA  = 0.0e+0_fp
-      !Plume2d_tail%LIFE = 0.0e+0_fp
-
-      !Plume2d_tail%LENGTH = Length_init ! m 
-      !Plume2d_tail%PDX = Dx_init
-      !Plume2d_tail%PDY = Dy_init
-      
-      !ALLOCATE(Plume2d_tail%CONCNT2d(n_x_max, n_y_max, n_species)) 
-      !Plume2d_tail%CONCNT2d = 0.0e+0_fp ! molec/cm3
-      
-      ! pass all species as from background as initial concentration
-      !DO N = 1, n_species
-      !  Plume2d_tail%CONCNT2d(:,:,N) = Spc(N)%Conc(i_lon, i_lat, i_lev)  ! molec/cm3
-      !ENDDO
-
-      ! add injected species to the center of plume grid
-      !DO N = 1, num_of_sources
-      !  spc_name = Plume_sources(N)%species
-      !  id_tracer   = Ind_(spc_name)
-      !  Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,id_tracer)   &
-      !              + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-      !              /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
-                    
-         !Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N) = Plume2d_tail%CONCNT2d(n_x_mid,n_y_mid,n_species+N)  &
-         !           + (Plume2d_tail%LENGTH * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-         !           /(Plume2d_tail%PDX * Plume2d_tail%PDY *Plume2d_tail%LENGTH*1.E6_fp ) ! molec/cm3
-      !ENDDO
-      !NULLIFY(Plume2d_tail%next)
-      !Plume2d_head => Plume2d_tail
-      !Num_Plume2d = 1
-    !ELSE
-      ! add injected species into eulerian grid
-      !WRITE(6,'(a)') ' lagrange module was turned off, add injected species to eulerian grid'
-      !DO N = 1, num_of_sources
-      !  spc_name = Plume_sources(N)%species
-      !  id_tracer   = Ind_(spc_name)
-      !  Spc(id_tracer)%Conc(i_lon, i_lat, i_lev) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)  &
-      !          + (Length_init * Plume_sources(N)%rate / State_Chm%SpcData(id_tracer)%Info%MW_g * Avo) &
-      !              /(State_Met%AIRVOL(i_lon, i_lat, i_lev)*1.E6_fp ) ! molec/cm3
-      !ENDDO
-    !ENDIF
-    !Num_inject = 1
-    !tt = 0
-    ! convert back from molec/cm3 to kg/kg dry
-    !CALL Convert_Spc_Units(                                            &
-    !            Input_Opt  = Input_Opt,                                       &
-    !            State_Chm  = State_Chm,                                       &
-    !            State_Grid = State_Grid,                                      &
-    !            State_Met  = State_Met,                                       &
-    !            new_units  = previous_units_temp,                                  &
-    !            RC         = RC                                              )
-    ! convert back from kg/kg dry to v/ v dry
-    !CALL Convert_Spc_Units(                                            &
-    !            Input_Opt  = Input_Opt,                                       &
-    !            State_Chm  = State_Chm,                                       &
-    !            State_Grid = State_Grid,                                      &
-    !            State_Met  = State_Met,                                       &
-    !            new_units  = previous_units,                                  &
-    !            RC         = RC                                              )
-    !WRITE(6,'(a)') 'debug in plume_initialize: after initialization, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(1)%Units))
-90  FORMAT( /, A                 )
-95  FORMAT( A                    )
-100 FORMAT( A, L5                )
-105 FORMAT( A, I0                )
-110 FORMAT( A, A                 )
-120 FORMAT(A8,1X,"|", A8,1X,"|",A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
-121 FORMAT(I8,1X,"|",F8.3,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A)
+!90  FORMAT( /, A                 )
+!95  FORMAT( A                    )
+!100 FORMAT( A, L5                )
+!105 FORMAT( A, I0                )
+!110 FORMAT( A, A                 )
+!120 FORMAT(A8,1X,"|", A8,1X,"|",A8,1X,"|",1X,A8,1X,"|",1X,A8,1X,"|",1X,A10,1X,"|",1X,A)
+!121 FORMAT(I8,1X,"|",F8.3,1X,"|",F8.3,1X,"|",1X,F8.3,1X,"|",1X,F8.3,1X,"|",1X,F10.3,1X,"|",1X,A)
 
   END SUBROUTINE lagrange_init_box
+
   SUBROUTINE lagrange_init_box_tomas(am_I_root, Input_Opt, State_Chm, State_Grid, State_Met, RC)
 
     USE Input_Opt_Mod,   ONLY : OptInput
@@ -642,7 +575,7 @@ CONTAINS
 #else
     Mo = 1.0e-21_fp
 #endif
-    Write (6, *) "Debug: (BZ) Mo =  : ", Mo
+    ! Write (6, *) "Debug: (BZ) Mo =  : ", Mo
 #if defined(TOMAS12) || defined(TOMAS15)
     DO ibin = 1, nBins + 1
        if(ibin.lt.nBins)then
@@ -672,14 +605,11 @@ CONTAINS
     spc_names_p_use(1:10)=spc_names_p(1:10)
     
      DO i_species = 1, nspc_p_tomas_tracer
-
-         first_tracer = TRIM(spc_names_p(10+i_species))
-         
+         first_tracer = TRIM(spc_names_p(10+i_species))   
          DO ibin = 1, nBins
          write(this_tracer, '(A, I2.2)') TRIM(first_tracer(1:LEN_TRIM(first_tracer)-2)), ibin
          spc_names_p_use(10+i_species+(ibin-1)*nspc_p_tomas_tracer) = &
                   TRIM(this_tracer)
-         
       ENDDO
     ENDDO
     ! Dubug printout
@@ -689,35 +619,66 @@ CONTAINS
     ENDDO 
 
     ! Creat file for TOMAS tracer diag
-    File_SF_bin_IU = findFreeLun()
-    file_SF_bin   = 'Plume_SF_bin.txt'
-    OPEN( File_SF_bin_IU, FILE=TRIM( file_SF_bin ), STATUS='REPLACE', &
+    File_SF_bin_IU_2D = findFreeLun()
+    file_SF_bin_2D   = 'Plume_SF_bin_2D.txt'
+    OPEN( File_SF_bin_IU_2D, FILE=TRIM( file_SF_bin_2D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
-    CLOSE(File_SF_bin_IU)
+    CLOSE(File_SF_bin_IU_2D)
+
+    File_SF_bin_IU_1D = findFreeLun()
+    file_SF_bin_1D   = 'Plume_SF_bin_1D.txt'
+    OPEN( File_SF_bin_IU_1D, FILE=TRIM( file_SF_bin_1D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
+    CLOSE(File_SF_bin_IU_1D)
     
-    File_NK_bin_IU = findFreeLun()
-    file_NK_bin   = 'Plume_NK_bin.txt'
-    OPEN( File_NK_bin_IU, FILE=TRIM( file_NK_bin ), STATUS='REPLACE', &
+    File_NK_bin_IU_2D = findFreeLun()
+    file_NK_bin_2D   = 'Plume_NK_bin_2D.txt'
+    OPEN( File_NK_bin_IU_2D, FILE=TRIM( file_NK_bin_2D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
-    CLOSE(File_NK_bin_IU)
+    CLOSE(File_NK_bin_IU_2D)
 
-    File_MK_bin_IU = findFreeLun()
-    file_MK_bin   = 'Plume_MK_bin.txt'
-    OPEN( File_MK_bin_IU, FILE=TRIM( file_MK_bin ), STATUS='REPLACE', &
+    File_NK_bin_IU_1D = findFreeLun()
+    file_NK_bin_1D   = 'Plume_NK_bin_1D.txt'
+    OPEN( File_NK_bin_IU_1D, FILE=TRIM( file_NK_bin_1D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
-    CLOSE(File_MK_bin_IU)
+    CLOSE(File_NK_bin_IU_1D)
 
-    ALLOCATE( mass_SF_bin( nBins ), STAT=RC )
-    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_SF_bin [TOMAS] in plume' )
-    mass_SF_bin(:) = 0e+0_fp
+    File_MK_bin_IU_2D = findFreeLun()
+    file_MK_bin_2D   = 'Plume_MK_bin_2D.txt'
+    OPEN( File_MK_bin_IU_2D, FILE=TRIM( file_MK_bin_2D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
+    CLOSE(File_MK_bin_IU_2D)
 
-    ALLOCATE( mass_NK_bin( nBins ), STAT=RC )
-    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_NK_bin [TOMAS] in plume' )
-    mass_NK_bin(:) = 0e+0_fp
+    File_MK_bin_IU_1D = findFreeLun()
+    file_MK_bin_1D   = 'Plume_MK_bin_1D.txt'
+    OPEN( File_MK_bin_IU_1D, FILE=TRIM( file_MK_bin_1D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=RC )
+    CLOSE(File_MK_bin_IU_1D)
 
-    ALLOCATE( mass_MK_bin( nBins ), STAT=RC )
-    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_MK_bin [TOMAS] in plume' )
-    mass_MK_bin(:) = 0e+0_fp
+    ! Creat arrays for TOMAS tracer diag
+    ALLOCATE( mass_SF_bin_2D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_SF_bin_2D [TOMAS] in plume' )
+    mass_SF_bin_2D(:) = 0e+0_fp
+
+    ALLOCATE( mass_SF_bin_1D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_SF_bin_1D [TOMAS] in plume' )
+    mass_SF_bin_1D(:) = 0e+0_fp
+
+    ALLOCATE( mass_NK_bin_2D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_NK_bin_2D [TOMAS] in plume' )
+    mass_NK_bin_2D(:) = 0e+0_fp
+
+    ALLOCATE( mass_NK_bin_1D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_NK_bin_1D [TOMAS] in plume' )
+    mass_NK_bin_1D(:) = 0e+0_fp
+
+    ALLOCATE( mass_MK_bin_2D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_MK_bin_2D [TOMAS] in plume' )
+    mass_MK_bin_2D(:) = 0e+0_fp
+
+    ALLOCATE( mass_MK_bin_1D( nBins ), STAT=RC )
+    IF ( RC /= 0 ) CALL ALLOC_ERR( 'mass_MK_bin_1D [TOMAS] in plume' )
+    mass_MK_bin_1D(:) = 0e+0_fp
 
   END SUBROUTINE lagrange_init_box_tomas
   SUBROUTINE plume_inject_box(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
@@ -802,8 +763,8 @@ CONTAINS
             new_units      = MOLECULES_SPECIES_PER_CM3,                   &
             previous_units = previous_units_temp,                              &
             RC             = RC                                          )
-    WRITE(6,'(a)') 'debug : Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
-    WRITE(6,'(a)') 'debug : During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+    !WRITE(6,'(a)') 'debug : Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
+    !WRITE(6,'(a)') 'debug : During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
     
     ! Check that species units are in  molec/cm3
     IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
@@ -830,11 +791,11 @@ CONTAINS
                 write(6,*) 'debug (BZ): injection lat: ', box_lat, 'Num_inject: ', i_box
                 box_lev    = Plume_sources(1)%lev
 
-                i_lon = Find_iLonLat(box_lon, DX, X_edge2)
+                i_lon = Find_iLonLat(box_lon, DX_GC, X_edge2)
                 if(i_lon>NX_GC) i_lon=i_lon-NX_GC
                 if(i_lon<1) i_lon=i_lon+NX_GC
                 !WRITE(6,*) 'debug: ilon=', i_lon
-                i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
+                i_lat = Find_iLonLat(box_lat, DY_GC, Y_edge2)
                 if(i_lat>NY_GC) i_lat=NY_GC
                 if(i_lat<1) i_lat=1
                 !WRITE(6,*) 'debug: ilat=', i_lat
@@ -867,10 +828,10 @@ CONTAINS
                 write(6,*) 'debug (BZ): injection lat: ', Plume2d_new%LAT, 'Num_inject: ', i_box
                 Plume2d_new%LEV             = Plume_sources(1)%lev
                  
-                i_lon = Find_iLonLat(Plume2d_new%LON, DX, X_edge2)
+                i_lon = Find_iLonLat(Plume2d_new%LON, DX_GC, X_edge2)
                 if(i_lon>NX_GC) i_lon=i_lon-NX_GC
                 if(i_lon<1) i_lon=i_lon+NX_GC
-                i_lat = Find_iLonLat(Plume2d_new%LAT, DY, Y_edge2)
+                i_lat = Find_iLonLat(Plume2d_new%LAT, DY_GC, Y_edge2)
                 if(i_lat>NY_GC) i_lat=NY_GC
                 if(i_lat<1) i_lat=1
                 i_lev = Find_iPLev(Plume2d_new%LEV,P_edge)
@@ -879,7 +840,7 @@ CONTAINS
                 Plume2d_new%lon_ind = i_lon
                 Plume2d_new%lev_ind = i_lev
 
-                Plume2d_new%LENGTH = Length_init ! 1000m 
+                Plume2d_new%LENGTH = Length_init  !unit: m 
                 Plume2d_new%ALPHA  = 0.0e+0_fp
                 Plume2d_new%LIFE   = 0.0e+0_fp
                 Plume2d_new%PDX    = Dx_init
@@ -894,7 +855,7 @@ CONTAINS
                      errMsg = 'Error allocating Plume2d_new%CONCNT2d'
                      !CALL GC_Error( errMsg, RC, thisLoc )
                      CALL ERROR_STOP( errMsg, thisLoc)
-                     RETURN
+                     !RETURN
                  END IF
                 ALLOCATE(Plume2d_new%MassRef2d(nspc_p))
                 Plume2d_new%CONCNT2d = 0.0e+0_fp
@@ -956,7 +917,7 @@ CONTAINS
                   Plume2d_new%MassRef2d(i_species) = Spc(id_tracer)%Conc(i_lon, i_lat, i_lev)*(n_x_max*n_y_max*Vgrid_2D)
                 ENDDO
 #endif
-                ! add tracer concentration
+                ! add injected mass
                 DO i_species = 1, num_of_sources
                     spc_name = Plume_sources(i_species)%species
                     id_tracer = GET_PLUME_SPC_ID(spc_name)
@@ -970,16 +931,16 @@ CONTAINS
                                 /(Plume2d_new%PDX * Plume2d_new%PDY *Plume2d_new%LENGTH*1.E6_fp ) ! molec/cm3
                     ENDIF                                
                 ENDDO
-                mass_S_SO2_inj = mass_S_SO2_inj + &
+                mass_S_SO2_inj_2D = mass_S_SO2_inj_2D + &
                         (Plume2d_new%LENGTH * Plume_sources(1)%rate) / 64.0_fp * Avo 
-                mass_S_SO2_1 = mass_S_SO2_1 + & 
+                mass_S_SO2_1_2D = mass_S_SO2_1_2D + & 
                         SUM(Plume2d_new%CONCNT2d(:, :, id_SO2_p)) * Vgrid_2D 
                
-                mass_S_SO4_1 = mass_S_SO4_1 +  &
+                mass_S_SO4_1_2D = mass_S_SO4_1_2D +  &
                        SUM(Plume2d_new%CONCNT2d(:,:, id_SO4_p)) * Vgrid_2D 
-                OPEN( File_spc_init_IU,      FILE=TRIM( file_spc_init   ), STATUS='OLD',  &
+                OPEN( File_spc_init_IU_2D,      FILE=TRIM( file_spc_init_2D   ), STATUS='OLD',  &
                      POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-                WRITE(File_spc_init_IU, '(*(g0,:,","))')  Plume2d_new%label, Plume2d_new%MassRef2d(1:nspc_p)
+                WRITE(File_spc_init_IU_2D, '(*(g0,:,","))')  Plume2d_new%label, Plume2d_new%MassRef2d(1:nspc_p)
 
                 NULLIFY(Plume2d_new%next)
                 IF ( .NOT. ASSOCIATED(Plume2d_head) ) THEN
@@ -1004,7 +965,7 @@ CONTAINS
                State_Met      = State_Met,                                   &
                new_units      = previous_units_temp,                   &
                RC             = RC                                          )
-    WRITE(6,'(a)') 'debug: after plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
+    !WRITE(6,'(a)') 'debug: after plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
 
   END SUBROUTINE plume_inject_box
 
@@ -1070,6 +1031,7 @@ CONTAINS
     this_year = GET_YEAR()
     this_month= GET_MONTH()
 
+    time_elapsed = time_elapsed + Dt
     !WRITE(6,'(a)') 'debug (BZ): TAU = ',  this_tau, 'TAUb = ', this_taub
     !WRITE(6,'(a)') 'debug (BZ): this_year = ',  this_year, 'this_month = ', this_month
 
@@ -1127,27 +1089,7 @@ CONTAINS
       ! Dissolve when meet the criteria 
 
       ! write diagnostic output
-      CALL lagrange_write_std( am_I_Root, RC )
-      ! Temporary write the output here
-      OPEN( File_Smass_IU,      FILE=TRIM( file_Smass   ), STATUS='OLD',  &
-          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-      WRITE(File_Smass_IU,'(*(ES12.4,1X))') mass_S_SO2_inj, mass_S_SO2_r1,  mass_S_SO2_r2, & 
-            mass_S_SO2_1, mass_S_SO2_2, mass_S_SO2_3, &
-            mass_S_SO4_inj,  mass_S_SO4_r1,  mass_S_SO4_r2, & 
-            mass_S_SO4_1, mass_S_SO4_2, mass_S_SO4_3
-#ifdef TOMAS
-      OPEN( File_SF_bin_IU,      FILE=TRIM( file_SF_bin   ), STATUS='OLD',  &
-          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-      WRITE(File_SF_bin_IU, '(*(ES12.4,1X,","))') (mass_SF_bin(ibin), ibin= 1, nBins)
-
-      OPEN( File_NK_bin_IU,      FILE=TRIM( file_NK_bin   ), STATUS='OLD',  &
-          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-      WRITE(File_NK_bin_IU, '(*(ES12.4,1X,","))') (mass_NK_bin(ibin), ibin= 1, nBins)
-
-      OPEN( File_MK_bin_IU,      FILE=TRIM( file_MK_bin   ), STATUS='OLD',  &
-          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
-      WRITE(File_MK_bin_IU, '(*(ES12.4,1X,","))') (mass_MK_bin(ibin), ibin= 1, nBins)
-#endif
+      CALL lagrange_write_std( time_elapsed )
 
       ! convert unit back
       CALL Convert_Spc_Units(                                            &
@@ -1216,24 +1158,44 @@ CONTAINS
           CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:spc_names_p_use', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF
-    IF ( ALLOCATED(mass_spc_init))  THEN
-          DEALLOCATE(mass_spc_init, STAT=RC )
-          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_spc_init', 2, RC )
+    IF ( ALLOCATED(mass_spc_init_2D))  THEN
+          DEALLOCATE(mass_spc_init_2D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_spc_init_2D', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF
-    IF ( ALLOCATED(mass_SF_bin))  THEN
-          DEALLOCATE(mass_SF_bin, STAT=RC )
-          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_SF_bin', 2, RC )
+    IF ( ALLOCATED(mass_spc_init_1D))  THEN
+          DEALLOCATE(mass_spc_init_1D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_spc_init_1D', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF
-    IF ( ALLOCATED(mass_NK_bin))  THEN
-          DEALLOCATE(mass_NK_bin, STAT=RC )
-          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_NK_bin', 2, RC )
+    IF ( ALLOCATED(mass_SF_bin_2D))  THEN
+          DEALLOCATE(mass_SF_bin_2D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_SF_bin_2D', 2, RC )
+          IF ( RC /= GC_SUCCESS ) RETURN
+    ENDIF
+    IF ( ALLOCATED(mass_SF_bin_1D))  THEN
+          DEALLOCATE(mass_SF_bin_1D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_SF_bin_1D', 2, RC )
+          IF ( RC /= GC_SUCCESS ) RETURN
+    ENDIF
+    IF ( ALLOCATED(mass_NK_bin_2D))  THEN
+          DEALLOCATE(mass_NK_bin_2D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_NK_bin_2D', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF 
-    IF ( ALLOCATED(mass_MK_bin))  THEN
-          DEALLOCATE(mass_MK_bin, STAT=RC )
-          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_MK_bin', 2, RC )
+    IF ( ALLOCATED(mass_NK_bin_1D))  THEN
+          DEALLOCATE(mass_NK_bin_1D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_NK_bin_1D', 2, RC )
+          IF ( RC /= GC_SUCCESS ) RETURN
+    ENDIF 
+    IF ( ALLOCATED(mass_MK_bin_2D))  THEN
+          DEALLOCATE(mass_MK_bin_2D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_MK_bin_2D', 2, RC )
+          IF ( RC /= GC_SUCCESS ) RETURN
+    ENDIF
+    IF ( ALLOCATED(mass_MK_bin_1D))  THEN
+          DEALLOCATE(mass_MK_bin_1D, STAT=RC )
+          CALL GC_CheckVar( 'lagrange_singlebox_mod.F90:mass_MK_bin_1D', 2, RC )
           IF ( RC /= GC_SUCCESS ) RETURN
     ENDIF   
 !
@@ -1410,8 +1372,10 @@ CONTAINS
   T2            =>     State_Met%TMPU2     ! Temperature at end of timestep [K]
   P_BXHEIGHT    =>     State_Met%BXHEIGHT  ![NX_GC,NY_GC,KKPAR]
   TROPP         =>     State_Met%TROPP     ! tropopause pressure, hpa
-   mass_S_SO2_2 = 0.0_fp
-   mass_S_SO4_2 = 0.0_fp   ! mass after physics
+  mass_S_SO2_2_2D = 0.0_fp
+  mass_S_SO4_2_2D = 0.0_fp   ! mass after physics
+  mass_S_SO2_2_1D = 0.0_fp
+  mass_S_SO4_2_1D = 0.0_fp   ! mass after physics
 
    !mass_S_SO2_1_1 = 0.0_fp ! mass before physics
    !mass_S_SO4_1_1 = 0.0_fp
@@ -1420,12 +1384,10 @@ CONTAINS
   !=======================================================================
 
   IF(.NOT.ASSOCIATED(Plume2d_head)) GOTO 401
+
   Plume2d_curr => Plume2d_head
-  i_box = 0
-  
   DO WHILE(ASSOCIATED(Plume2d_curr))
    
-    !i_box         = Plume2d_curr%label
     box_lon       = Plume2d_curr%LON
     box_lat       = Plume2d_curr%LAT
     box_lev       = Plume2d_curr%LEV
@@ -1445,18 +1407,18 @@ CONTAINS
     
     Vgrid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
     
-    !write(6,*) 'debug (BZ): solve plume physics in plume box: ', box_label
+    write(6,*) 'debug (BZ): solve plume physics in 2-D plume box: ', box_label
     !write(6,*) 'debug (BZ): SO2mass before physics: ', SUM(box_concnt_2D(:,:,id_SO2_p)) *  Vgrid_2D
     !write(6,*) 'debug (BZ): SO4mass before physics: ', SUM(box_concnt_2D(:,:,id_SO4_p)) *  Vgrid_2D
     !write(6,*) 'debug (BZ): SO2conc before physics: ', SUM(box_concnt_2D(:,:,id_SO2_p)) /  (n_x_max*n_y_max)
     !write(6,*) 'debug (BZ): SO4conc before physics: ', SUM(box_concnt_2D(:,:,id_SO4_p)) /  (n_x_max*n_y_max)
     !write(6,*) 'debug (BZ): SO2conc Euleria Grid: ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
     !write(6,*) 'debug (BZ): SO4conc Euleria Grid: ', Spc(id_SO4)%Conc(i_lon,i_lat,i_lev)
-#ifdef TOMAS
-   Write (6, *) 'Debug: BZ:  before physics, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
-   Write (6, *) 'Debug: BZ: before physics, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
-   Write (6, *) 'Debug: BZ: before physics Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
-#endif
+!#ifdef TOMAS
+   !Write (6, *) 'Debug: BZ:  before physics, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
+   !Write (6, *) 'Debug: BZ: before physics, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
+   !Write (6, *) 'Debug: BZ: before physics Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
+!#endif
     ! mass_S_SO2_1_1  = mass_S_SO2_1_1 + SUM(box_concnt_2D(:,:,id_SO2)) *  Vgrid_2D
     ! mass_S_SO4_1_1  = mass_S_SO4_1_1 + SUM(box_concnt_2D(:,:,id_SO4)) *  Vgrid_2D
     
@@ -1641,11 +1603,11 @@ CONTAINS
     endif
 
     ! update index based on new location
-    i_lon = Find_iLonLat(box_lon, DX, X_edge2)
+    i_lon = Find_iLonLat(box_lon, DX_GC, X_edge2)
     if(i_lon>NX_GC) i_lon=i_lon-NX_GC
     if(i_lon<1) i_lon=i_lon+NX_GC
 
-    i_lat = Find_iLonLat(box_lat, DY, Y_edge2)
+    i_lat = Find_iLonLat(box_lat, DY_GC, Y_edge2)
     if(i_lat>NY_GC) i_lat=NY_GC
     if(i_lat<1) i_lat=1
 
@@ -1732,19 +1694,18 @@ CONTAINS
     Plume2d_curr%PDY = Pdy
     Plume2d_curr%CONCNT2d    = box_concnt_2D
 
-    
-    Vgrid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
+    !Vgrid_2D       = Pdx*Pdy*box_length*1.0e+6_fp ! [cm3]
     ! write(6,*) 'debug (BZ): SO2mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     ! write(6,*) 'debug (BZ): SO4mass middle physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
     !write(6,*) 'debug (BZ): SO2mass after plume shape change: ', SUM(box_concnt_2D(:,:,id_SO2_p)) *  Vgrid_2D
     !write(6,*) 'debug (BZ): SO4mass after plume shape change: ', SUM(box_concnt_2D(:,:,id_SO4_p)) *  Vgrid_2D
     !write(6,*) 'debug (BZ): SO2conc after plume shape change: ', SUM(box_concnt_2D(:,:,id_SO2_p)) /  (n_x_max*n_y_max)
     !write(6,*) 'debug (BZ): SO4conc after plume shape change: ', SUM(box_concnt_2D(:,:,id_SO4_p)) /  (n_x_max*n_y_max)
-#ifdef TOMAS
-   Write (6, *) 'Debug: BZ: after plume shape change, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
-   Write (6, *) 'Debug: BZ: after plume shape change, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
-   Write (6, *) 'Debug: BZ: after plume shape change Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
-#endif
+!#ifdef TOMAS
+   !Write (6, *) 'Debug: BZ: after plume shape change, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
+   !Write (6, *) 'Debug: BZ: after plume shape change, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
+   !Write (6, *) 'Debug: BZ: after plume shape change Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
+!#endif
     !-------- solve in-plume concentration here
     ! advection and diffusion
 
@@ -1930,15 +1891,10 @@ CONTAINS
           mass_after_clip  = 0.0_fp
           DO t1s = 1, Nt !NINT(Dt/Pdt)
 
-            !Pc_bdy(:,:) = Spc(i_species)%Conc(i_lon, i_lat, i_lev)
-            !Pc_bdy(2:n_x_max2-1,2:n_y_max2-1) = Concnt2D_bdy(2:n_x_max2-1,2:n_y_max2-1)
-            !C2d_bg(:,:)  = 0.0_fp
-
             C2d_bg(:,:)  = background_conc
             C2d_bg(2:n_x_max2-1,2:n_y_max2-1) =C2d_new(2:n_x_max2-1,2:n_y_max2-1) 
             
             ! Only calculate the vertical half 2D domain
-
             !$OMP PARALLEL DO           &
             !$OMP DEFAULT( SHARED     ) &
             !$OMP PRIVATE(i_y,i_x,CFL,Pc_middle,Pc_top,Pc_bottom,Pc_right,Pc_left, Pc_update)
@@ -1959,17 +1915,15 @@ CONTAINS
               C2d_new(i_x, i_y) = Pc_update
               ! update the other half based on vertical symmetry 
               C2d_new(i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y)
-
-
             ENDDO
             ENDDO
             !$OMP END PARALLEL DO
-            mass_before_clip = mass_before_clip + SUM(C2d_new)
+            mass_before_clip = mass_before_clip + SUM(C2d_new(2:n_x_max2-1,2:n_y_max2-1))
             C2d_new = MAX(C2d_new, 0.0_fp)
-            mass_after_clip = mass_after_clip + SUM(C2d_new)
+            mass_after_clip = mass_after_clip + SUM(C2d_new(2:n_x_max2-1,2:n_y_max2-1))
             
           ENDDO ! DO t1s = 1, NINT(Dt/Pdt)
-          WRITE(6,*) 'Debug (BZ): adv & diff: Plume id= ', box_label, &
+          WRITE(6,*) 'Debug (BZ): adv & diff (2-D): Plume id= ', box_label, &
                                     'Species id= ', i_species, &
                                     'mass_before_clip= ', mass_before_clip, &
                                     'mass_after_clip= ', mass_after_clip
@@ -1999,10 +1953,11 @@ CONTAINS
             !        Plume2d_curr%label, '; Species: ', i_species, 'D_mass_plume: ', D_mass_plume
             !GC_Warning( ErrMsg, RC, ThisLoc )
             WRITE (6, *) "(Debug: BZ) Mass enter the plume but background is 0, Revise to the prevous conc"
-            WRITE (6, *) "Plume num: ", Plume2d_curr%label, '; Species: ', TRIM(spc_name), &
+            WRITE (6, *) "(2-D) Plume num: ", Plume2d_curr%label, '; Species: ', TRIM(spc_name), &
                         'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
             C2d_new(2:n_x_max2-1,2:n_y_max2-1) = C2d_prev
-
+            mass_plume_new = mass_plume
+            D_mass_plume = 0.0_fp
           ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
             ! Later might need to adjust the species that enter the plume to ensure mass conservation
             !ErrMsg = "(Debug: BZ) Mass enter the plume larger than mass in background, Plume num: ", &
@@ -2010,7 +1965,7 @@ CONTAINS
             !        'background_mass: ', background_mass
             !GC_Warning( ErrMsg, RC, ThisLoc )
             WRITE (6, *) "(Debug: BZ) Mass enter the plume larger than mass in background, scaled mass entered"
-            WRITE (6, *)  "Plume num: ", Plume2d_curr%label, '; Species: ', TRIM(spc_name), &
+            WRITE (6, *)  "(2-D) Plume num: ", Plume2d_curr%label, '; Species: ', TRIM(spc_name), &
                            'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
             
             C2d_new(2:n_x_max2-1,2:n_y_max2-1) = C2d_new(2:n_x_max2-1,2:n_y_max2-1) * &
@@ -2025,13 +1980,6 @@ CONTAINS
 
           background_mass_new = MAX( 0.0_fp, background_mass - D_mass_plume )
 
-          !i_advect = id_PASV_LA +i_species -1
-
-          !backgrd_concnt = State_Chm%Species(i_species)%Conc(i_lon,i_lat,i_lev)
-
-          !backgrd_concnt = ( backgrd_concnt*grid_volume &
-                                          !- D_mass_plume) /grid_volume
-          ! Need to adjust C2d_new if mass enter the plume larger than background mass
           box_concnt_2D(:,:,i_species) = C2d_new(2:n_x_max2-1,2:n_y_max2-1)
           Spc(ind_spc_GC)%Conc(i_lon,i_lat,i_lev) = background_mass_new / Vgrid_EU
 #ifdef TOMAS
@@ -2098,13 +2046,15 @@ CONTAINS
                
                IF ((background_mass <= 0.0_fp).AND. (D_mass_plume.GT. 0.0_fp)) THEN
                   WRITE (6, *) "(Debug: BZ) Mass enter the plume but background is 0, Revise to the prevous conc"
-                  WRITE (6, *) "Plume num: ", Plume2d_curr%label, '; Species: NK', ibin, &
+                  WRITE (6, *) "(2-D) Plume num: ", Plume2d_curr%label, '; Species: NK', ibin, &
                               'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
                    C2d_new_NK = C2d_prev_NK
+                   D_mass_plume = 0.0_fp
+                   mass_plume_new = mass_plume
 
                ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
                   WRITE (6, *) "(Debug: BZ) Mass enter the plume larger than mass in background, scaled mass entered"
-                  WRITE (6, *)  "Plume num: ", Plume2d_curr%label, '; Species: NK', ibin, &
+                  WRITE (6, *)  "(2-D) Plume num: ", Plume2d_curr%label, '; Species: NK', ibin, &
                            'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
             
                   C2d_new_NK = C2d_new_NK * &
@@ -2128,13 +2078,15 @@ CONTAINS
                excess_mass = D_mass_plume - background_mass
                IF ((background_mass <= 0.0_fp).AND. (D_mass_plume.GT. 0.0_fp)) THEN
                   WRITE (6, *) "(Debug: BZ) Mass enter the plume but background is 0, Revise to the prevous conc"
-                  WRITE (6, *) "Plume num: ", Plume2d_curr%label, '; Species: SF', ibin, &
+                  WRITE (6, *) "(2-D) Plume num: ", Plume2d_curr%label, '; Species: SF', ibin, &
                               'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
                    C2d_new_SF = C2d_prev_SF
+                   D_mass_plume = 0.0_fp
+                   mass_plume_new = mass_plume
 
                ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
                   WRITE (6, *) "(Debug: BZ) Mass enter the plume larger than mass in background, scaled mass entered"
-                  WRITE (6, *)  "Plume num: ", Plume2d_curr%label, '; Species: SF', ibin, &
+                  WRITE (6, *)  "(2-D) Plume num: ", Plume2d_curr%label, '; Species: SF', ibin, &
                            'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
             
                   C2d_new_SF = C2d_new_SF * &
@@ -2154,8 +2106,8 @@ CONTAINS
 #endif         
 
           IF (i_species .eq. id_SO2_p) THEN
-            mass_S_SO2_r1 = mass_S_SO2_r1 + D_mass_plume
-            WRITE (6, *) "(Debug: BZ) SO2 Mass enter plume num: ", &
+            mass_S_SO2_r1_2D = mass_S_SO2_r1_2D + D_mass_plume
+            WRITE (6, *) "(Debug: BZ) (2-D) SO2 Mass enter plume num: ", &
                       Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
             ! mass_S_SO2_1_1 = mass_S_SO2_1_1 + mass_plume
             ! WRITE (6, *) "(Debug: BZ) ID_SO2 is", i_species 
@@ -2164,10 +2116,10 @@ CONTAINS
             ! mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,i_species)) * V_grid_2D
           ENDIF
           IF (i_species .eq. id_SO4_p) THEN
-            WRITE (6, *) "(Debug: BZ) SO4 Mass enter plume num: ", &
+            WRITE (6, *) "(Debug: BZ) (2-D) SO4 Mass enter plume num: ", &
                       Plume2d_curr%label, 'is D_mass_plume= ', D_mass_plume
             !WRITE (6, *) "(Debug: BZ) ID_SO4 is", i_species          
-            mass_S_SO4_r1 = mass_S_SO4_r1 + D_mass_plume
+            mass_S_SO4_r1_2D = mass_S_SO4_r1_2D + D_mass_plume
             !mass_S_SO4_1_1 = mass_S_SO4_1_1 + mass_plume
             !write(6,*) 'debug (BZ): SO4mass middle physics 2: ', mass_plume 
             !write(6,*) 'debug (BZ): SO4mass middle physics 3: ', mass_plume_new 
@@ -2186,18 +2138,20 @@ CONTAINS
          !ENDIF
 !#endif
         ENDDO ! DO i_species=1,n_species,1
+        Plume2d_curr%CONCNT2d    = box_concnt_2D
+        
         !write(6,*) 'debug (BZ): SO2mass after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO2_p)) *  Vgrid_2D
         !write(6,*) 'debug (BZ): SO4mass after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO4_p)) *  Vgrid_2D
         !write(6,*) 'debug (BZ): SO2conc after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO2_p)) /  (n_x_max*n_y_max)
         !write(6,*) 'debug (BZ): SO4conc after inplume conc: ', SUM(box_concnt_2D(:,:,id_SO4_p)) /  (n_x_max*n_y_max)
-#ifdef TOMAS
-   Write (6, *) 'Debug: BZ: after inplume conc, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
-   Write (6, *) 'Debug: BZ: after inplume conc, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
+!#ifdef TOMAS
+   !Write (6, *) 'Debug: BZ: after inplume conc, SO4 (molec)= ', box_concnt_2D(1,2, id_SO4_p)
+   !Write (6, *) 'Debug: BZ: after inplume conc, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
    ! Write (6, *) 'Debug: BZ: after inplume conc, Nk bin sum (molec)= ', SUM(box_concnt_2D(:,:, 10+1+(14-1)*nspc_p_tomas_tracer))
-   Write (6, *) 'Debug: BZ: after inplume conc Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
-#endif
-    mass_S_SO2_2 = mass_S_SO2_2 + SUM(box_concnt_2D(:,:,id_SO2_p)) * Vgrid_2D
-    mass_S_SO4_2 = mass_S_SO4_2 + SUM(box_concnt_2D(:,:,id_SO4_p)) * Vgrid_2D
+   !Write (6, *) 'Debug: BZ: after inplume conc Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
+!#endif
+    mass_S_SO2_2_2D = mass_S_SO2_2_2D + SUM(box_concnt_2D(:,:,id_SO2_p)) * Vgrid_2D
+    mass_S_SO4_2_2D = mass_S_SO4_2_2D + SUM(box_concnt_2D(:,:,id_SO4_p)) * Vgrid_2D
     !write(6,*) 'debug (BZ): SO2mass after physics: ', SUM(box_concnt_2D(:,:,id_SO2)) * V_grid_2D
     !write(6,*) 'debug (BZ): SO4mass after physics: ', SUM(box_concnt_2D(:,:,id_SO4)) * V_grid_2D
 
@@ -2218,15 +2172,10 @@ CONTAINS
       ! box_theta = ATAN( Xscale/Yscale )
       IF ((Xscale/Yscale .gt. 25.0_fp) .OR.(Plume2d_curr%LIFE > Critical_day_2D * 3600.0_fp * 24.0_fp)) THEN
          Plume2d_curr%IsTransfer = .True.
-
       ENDIF 
     ENDIF
-
-
-    Plume2d_curr%CONCNT2d    = box_concnt_2D
     Plume2d_curr => Plume2d_curr%next
   ENDDO  ! DO WHILE(ASSOCIATED(Plume2d))
-
 
 401 CONTINUE
   !=======================================================================
@@ -2235,28 +2184,31 @@ CONTAINS
   IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
   Plume1d_curr => Plume1d_head
   DO WHILE(ASSOCIATED(Plume1d_curr))
-    box_lon    = Plume1d_curr%LON
-    box_lat    = Plume1d_curr%LAT
-    box_lev    = Plume1d_curr%LEV
-    i_lat      = Plume1d_curr%lat_ind
-    i_lon      = Plume1d_curr%lon_ind
-    i_lev      = Plume1d_curr%lev_ind
+    box_lon       = Plume1d_curr%LON
+    box_lat       = Plume1d_curr%LAT
+    box_lev       = Plume1d_curr%LEV
+    i_lat         = Plume1d_curr%lat_ind
+    i_lon         = Plume1d_curr%lon_ind
+    i_lev         = Plume1d_curr%lev_ind
 
-    box_length = Plume1d_curr%LENGTH
-    box_alpha  = Plume1d_curr%ALPHA
-    box_label  = Plume1d_curr%label
-    box_life   = Plume1d_curr%LIFE
-    box_Ra    = Plume1d_curr%RA
-    box_Rb    = Plume1d_curr%RB
-    box_theta = Plume1d_curr%THETA
+    box_length    = Plume1d_curr%LENGTH
+    box_alpha     = Plume1d_curr%ALPHA
+    box_label     = Plume1d_curr%label
+    box_life      = Plume1d_curr%LIFE
+    box_Ra        = Plume1d_curr%RA
+    box_Rb        = Plume1d_curr%RB
+    box_theta     = Plume1d_curr%THETA
+
     box_concnt_1D = Plume1d_curr%CONCNT1d
+
+    write(6,*) 'debug (BZ): solve plume physics in 1-D plume box: ', box_label
 
     box_life = box_life + Dt
 
     curr_lon      = box_lon
     curr_lat      = box_lat
     curr_pressure = box_lev
-
+    
     DO Ki = 1,4,1
       !------------------------------------------------------------------
       ! For vertical wind speed:
@@ -2425,11 +2377,11 @@ CONTAINS
       endif
 
       ! update index based on new location
-      i_lon = Find_iLonLat(curr_lon, DX, X_edge2)
+      i_lon = Find_iLonLat(box_lon, DX_GC, X_edge2)
       if(i_lon>NX_GC) i_lon=i_lon-NX_GC
       if(i_lon<1) i_lon=i_lon+NX_GC
 
-      i_lat = Find_iLonLat(curr_lat, DY, Y_edge2)
+      i_lat = Find_iLonLat(box_lat, DY_GC, Y_edge2)
       if(i_lat>NY_GC) i_lat=NY_GC
       if(i_lat<1) i_lat=1
 
@@ -2500,7 +2452,7 @@ CONTAINS
 
       Plume1d_curr%CONCNT1d = box_concnt_1D
 
-            !-------- solve in-plume concentration here
+      !-------- solve in-plume concentration here
       ! advection and diffusion
       curr_lon         = box_lon
       curr_lat         = box_lat
@@ -2608,7 +2560,7 @@ CONTAINS
       ENDDO
           
       DO i_species = 1, MIN(nspc_p, 10), 1
-         WRITE(6,*) 'Debug (BZ): adv & diff: 1-D Plume id= ', box_label, &
+         WRITE(6,*) 'Debug (BZ): adv & diff: (1-D) Plume id= ', box_label, &
                                     'Species id= ', i_species, &
                                     'mass_before_clip= ', mass_before_clip_1D(i_species), &
                                     'mass_after_clip= ', mass_after_clip_1D (i_species)
@@ -2642,7 +2594,8 @@ CONTAINS
             WRITE (6, *) "Plume num: ", Plume1d_curr%label, '; Species: ', TRIM(spc_name), &
                         'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
             box_concnt_1D(:,i_species) = box_concnt_1D_prev(:,i_species)
-
+            D_mass_plume    = 0.0_fp
+            mass_plume_new = mass_plume
          ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
             ! Later might need to adjust the species that enter the plume to ensure mass conservation
             !ErrMsg = "(Debug: BZ) Mass enter the plume larger than mass in background, Plume num: ", &
@@ -2701,7 +2654,8 @@ CONTAINS
                   WRITE (6, *) "Plume num: ", Plume1d_curr%label, '; Species: NK', ibin, &
                               'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
                    C1d_new_NK = C1d_prev_NK
-
+                   D_mass_plume    = 0.0_fp
+                   mass_plume_new = mass_plume
                ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
                   WRITE (6, *) "(Debug: BZ) 1-D: Mass enter the plume larger than mass in background, scaled mass entered"
                   WRITE (6, *)  "Plume num: ", Plume1d_curr%label, '; Species: NK', ibin, &
@@ -2730,7 +2684,8 @@ CONTAINS
                   WRITE (6, *) "Plume num: ", Plume1d_curr%label, '; Species: SF', ibin, &
                               'D_mass_plume: ', D_mass_plume, 'background_mass: ', background_mass
                    C1d_new_SF = C1d_prev_SF
-
+                   D_mass_plume    = 0.0_fp
+                   mass_plume_new = mass_plume
                ELSEIF (excess_mass .GT. 1.0e-2_fp * background_mass) THEN
                   WRITE (6, *) "(Debug: BZ) Mass enter the plume larger than mass in background, scaled mass entered"
                   WRITE (6, *)  "Plume num: ", Plume1d_curr%label, '; Species: SF', ibin, &
@@ -2747,9 +2702,21 @@ CONTAINS
                Spc(id_SF01+ibin-1)%Conc(i_lon,i_lat,i_lev) = background_mass_new / Vgrid_EU
             ENDDO
           ENDIF
-#endif         
+#endif
+         IF (i_species .eq. id_SO2_p) THEN
+            mass_S_SO2_r1_1D = mass_S_SO2_r1_1D + D_mass_plume
+            WRITE (6, *) "(Debug: BZ) (1-D) SO2 Mass enter plume num: ", &
+                     Plume1d_curr%label, 'is D_mass_plume= ', D_mass_plume
+         ENDIF
+         IF (i_species .eq. id_SO4_p) THEN
+            WRITE (6, *) "(Debug: BZ) (1-D) SO4 Mass enter plume num: ", &
+                     Plume1d_curr%label, 'is D_mass_plume= ', D_mass_plume        
+            mass_S_SO4_r1_1D = mass_S_SO4_r1_1D + D_mass_plume
+         ENDIF         
       ENDDO ! DO i_species=1,n_species,1
-
+      Plume1d_curr%CONCNT1D = box_concnt_1D
+      mass_S_SO2_2_1D = mass_S_SO2_2_1D + SUM(box_concnt_1D(:,id_SO2_p)) * Vgrid_1D
+      mass_S_SO4_2_1D = mass_S_SO4_2_1D + SUM(box_concnt_1D(:,id_SO4_p)) * Vgrid_1D
       ! --------------------------------------------------------------
       ! Decide if this plume will be dissolve
       ! Location + lifetime
@@ -2757,6 +2724,11 @@ CONTAINS
       IF ((box_lev>TROPP(i_lon,i_lat).AND.(TROPP_sink)).OR.(box_life>Critical_day_1D * 3600.0_fp*24.0_fp )) THEN
          Plume1d_curr%IsDissolve = .True.
       ENDIF
+      ! --------------------------------------------------------------
+      ! Decide if we need to split the plume
+      ! --------------------------------------------------------------
+
+
       Plume1d_curr => Plume1d_curr%next
   ENDDO
 
@@ -2813,7 +2785,7 @@ CONTAINS
 !    USE fullchem_AutoReduceFuncs, ONLY : fullchem_AR_SetIntegratorOptions
 !#endif
 !    USE GcKpp_Global
-    USE GcKpp_Parameters,           ONLY : NREACT, NSPEC
+    ! USE GcKpp_Parameters,           ONLY : NREACT, NSPEC
 !    USE Gckpp_Monitor,            ONLY : SPC_NAMES, Eqn_Names, Fam_Names
 !    USE GcKpp_Rates,              ONLY : UPDATE_RCONST, RCONST
 !    USE GcKpp_Integrator,         ONLY : Integrate
@@ -3015,12 +2987,20 @@ CONTAINS
     Dt                     =    GET_TS_DYN()
     n_debug_chem_max       =    n_x_max * n_y_max
     
-    mass_S_SO2_3    = 0.0_fp
-    mass_S_SO4_3    = 0.0_fp
-    mass_SF_bin(:)  = 0.0_fp
-    mass_NK_bin(:)  = 0.0_fp
-    mass_MK_bin(:)  = 0.0_fp
-
+    mass_S_SO2_3_2D    = 0.0_fp
+    mass_S_SO4_3_2D    = 0.0_fp
+    mass_S_SO2_3_1D    = 0.0_fp
+    mass_S_SO4_3_1D    = 0.0_fp
+#ifdef TOMAS
+    mass_SF_bin_2D(:)  = 0.0_fp
+    mass_NK_bin_2D(:)  = 0.0_fp
+    mass_MK_bin_2D(:)  = 0.0_fp
+    mass_SF_bin_1D(:)  = 0.0_fp
+    mass_NK_bin_1D(:)  = 0.0_fp
+    mass_MK_bin_1D(:)  = 0.0_fp
+    mass_S_H2SO4_2D    = 0.0_fp
+    mass_S_H2SO4_1D    = 0.0_fp
+#endif
     ALLOCATE(box_concnt_2D(n_x_max, n_y_max, nspc_p ))
     ALLOCATE(box_concnt_1D(n_slab_max, nspc_p ))
     ALLOCATE(debug_ix(n_debug_chem_max))
@@ -3040,8 +3020,8 @@ CONTAINS
 
     ! IF (State_Diag%Archive_RxnConst        ) Write(6, *) "Debug: (BZ) ; Archive_RxnRate", State_Diag%Archive_RxnRate
     ! For debug process, print rate constant 202: SO2 + OH {+M} = SO4 + HO2 + PH2SO4 :
-    Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN SO2_OH_RXN_ID = ", &
-      RXNRATE_CONST_KPP(23, 40, 39 ,SO2_OH_RXN_ID)
+    !Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN SO2_OH_RXN_ID = ", &
+    !  RXNRATE_CONST_KPP(23, 40, 39 ,SO2_OH_RXN_ID)
     DO WHILE(ASSOCIATED(Plume2d_curr))
       i_box         = Plume2d_curr%label
       i_lon         = Plume2d_curr%lon_ind
@@ -3053,7 +3033,7 @@ CONTAINS
       ! Hard coded in GeosUtil/gc_grid_mod.F90
       ! BZ: Maybe if plume reach out of chem grid, directly release species to Eulerian grid and delete the plume box?
       IF ( .not. State_Met%InChemGrid(i_lon,i_lat,i_lev) ) THEN
-        WRITE(6,*) 'Debug (BZ): Outside chem grid: (i_box, i_lon, i_lat, i_lev): ',    &
+        WRITE(6,*) 'Debug (BZ): 2-D plume outside chem grid: (i_box, i_lon, i_lat, i_lev): ',    &
         Plume2d_curr%label, i_lon, i_lat, i_lev
         Plume2d_curr%IsDissolve = .True.
         plume2d_curr => plume2d_curr%next
@@ -3073,10 +3053,10 @@ CONTAINS
       Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) = Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) * &
                                                    (1 - (Vgrid_2D*n_x_max*n_y_max)/(Vgrid_EU))
 #endif
-#ifdef TOMAS
-      Write (6, *) 'Debug: BZ: before chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
-      Write (6, *) 'Debug: BZ: before chemistry Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
-#endif
+!#ifdef TOMAS
+!      Write (6, *) 'Debug: BZ: before chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
+!      Write (6, *) 'Debug: BZ: before chemistry Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
+!#endif
       !WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO2 ', Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
       !WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of SO4 ', Spc(id_SO4)%Conc(i_lon,i_lat,i_lev)
       !WRITE(6,*) 'Debug (BZ): Euleria grid: Conc of OH ', Spc(id_OH)%Conc(i_lon,i_lat,i_lev)
@@ -3154,15 +3134,15 @@ CONTAINS
       DO N = 1, n_debug_chem
         SELECT CASE ( debug_status(N) )
         CASE (1)
-          WRITE(6,*) "Skip chem: low SO2 at 2-D segment [x,y,box]= ", &
+          WRITE(6,*) "Skip chem in 2-D Plume: low SO2 at 2-D segment [x,y,box]= ", &
                     debug_ix(N), debug_iy(N), debug_ibox(N), &
                " value = ", debug_value(n)
         CASE (2)
-          WRITE(6,*) "Skip chem: low OH at 2-D segment [x,y,box]= ", &
+          WRITE(6,*) "Skip chem in 2-D Plume: low OH at 2-D segment [x,y,box]= ", &
                     debug_ix(N), debug_iy(N), debug_ibox(N), &
                " value = ", debug_value(n)
         CASE (3)
-          WRITE(6,*) "Skip chem: low K[SO2][OH]dt at 2-D segment [x,y,box] = ", &
+          WRITE(6,*) "Skip chem in 2-D Plume: low K[SO2][OH]dt at 2-D segment [x,y,box] = ", &
                     debug_ix(N), debug_iy(N), debug_ibox(N), &
                     " value = ", debug_value(N)
         END SELECT
@@ -3186,12 +3166,14 @@ CONTAINS
       Spc(id_HO2)%Conc(i_lon,i_lat,i_lev) = (mass_HO2 -SUM(box_concnt_2D(:,:,id_HO2_p))*Vgrid_2D ) / &
                                               Vgrid_EU
 
-
+      mass_S_SO2_3_2D = mass_S_SO2_3_2D + SUM(box_concnt_2D(:,:, id_SO2_p)) * Vgrid_2D
+      mass_S_SO4_3_2D = mass_S_SO4_3_2D + SUM(box_concnt_2D(:,:, id_SO4_p)) * Vgrid_2D
 
 #ifdef TOMAS
-      Write (6, *) 'Debug: BZ: after chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
-      Write (6, *) 'Debug: BZ: after chemistry Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
-      write(6,*) 'debug (BZ): solve plume microphysics in plume 1-D box: ', i_box
+      write(6,*) 'debug (BZ): solve plume microphysics in plume 2-D box: ', i_box
+      !Write (6, *) 'Debug: BZ: after chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
+      !Write (6, *) 'Debug: BZ: after chemistry Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
+      !write(6,*) 'debug (BZ): solve plume microphysics in plume 1-D box: ', i_box
       !DO i_species = 1, nspc_p
       !  spc_name = spc_names_p(i_species)
       !  id_tracer   = Ind_(TRIM(spc_name))
@@ -3211,7 +3193,7 @@ CONTAINS
       !$OMP PRIVATE( TRANSFER, H2SO4rate_o, NH4bulk, NH3_to_NH4, fn, fn1,num_iter, ionrate, surf_area)       & 
       !$OMP PRIVATE(ERRORSWITCH, PRINTNEG, PRINTDEBUG, ERRSPOT)  &
       !$OMP PRIVATE( ERR_VAR, ERR_MSG, ERR_IND )                     &
-      !$OMP SCHEDULE( DYNAMIC )
+      !!$OMP SCHEDULE( DYNAMIC )
       DO i_y = 1, n_y_max, 1
          DO i_x = 1, n_x_max, 1
             PRES    = State_Met%PMID(i_lon,i_lat,i_lev)*100.0 ! in Pa
@@ -3256,7 +3238,6 @@ CONTAINS
                NH4bulk = box_concnt_2D(i_x,i_y,id_NH4_p)*BOXVOL/Avo*18.0_fp/1.0E+3_fp
                CALL NH4BULKTOBIN( MK(:,SRTSO4), NH4bulk, TRANSFER )
                MK(1:nbins,SRTNH4) = TRANSFER(1:nbins)
-
                Gc(SRTNH4) = box_concnt_2D(i_x,i_y,id_NH3_p)*BOXVOL/Avo*17.0_fp/1.0E+3_fp
 
             ENDIF
@@ -3264,11 +3245,11 @@ CONTAINS
             !GC(SRTSO4) = Spc(id_H2SO4)%Conc(I,J,L)
           
             H2SO4rate_o = H2SO4_RATE_2D(i_x, i_y)  ! [kg s-1]
-            !IF ( H2SO4rate_o .lt. 0.e0 ) THEN
-            !    Print*, 'Debug TOMAS: H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
-            !        'i_x = ', i_x, 'i_y = ', i_y
-            !    H2SO4rate_o = 0.e+0_fp
-            !ENDIF
+            IF ( H2SO4rate_o .lt. 0.e0 ) THEN
+                Print*, 'Debug TOMAS: (2-D) H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
+                    'i_x = ', i_x, 'i_y = ', i_y
+                H2SO4rate_o = 0.e+0_fp
+            ENDIF
 
             ! nitrogen and sulfur mass checks
             ! get the total mass of N
@@ -3285,21 +3266,21 @@ CONTAINS
 
             !Do water eqm at appropriate times
             CALL EZWATEREQM( MK, RHTOMAS )
-            IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: before microphysics, Nk bin 14 (kg)= ', Nk(14)
-                  Write (6, *) 'Debug: BZ: before microphysics Mk(SO4) bin 1 (kg) = ', Mk(1,1)
-            ENDIF
+            !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+            !      Write (6, *) 'Debug: BZ: before microphysics, Nk bin 14 (kg)= ', Nk(14)
+            !      Write (6, *) 'Debug: BZ: before microphysics Mk(SO4) bin 1 (kg) = ', Mk(1,1)
+            !ENDIF
             !Fix any inconsistencies in M/N distribution (because of advection)
             CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
             CALL MNFIX( NK, MK, ERRORSWITCH )
             IF ( ERRORSWITCH ) THEN
-               PRINT *,'Aerophys: MNFIX found error at (i_box, i_x, i_y) = ',i_box, i_x, i_y
+               PRINT *,'Aerophys 1: (2-D) MNFIX found error at (i_box, i_x, i_y) = ',i_box, i_x, i_y
                CALL ERROR_STOP('AEROPHYS-MNFIX (1)','Enter microphys')
             ENDIF
-            IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: before microphysics 1, Nk bin 14 (kg)= ', Nk(14)
-                  Write (6, *) 'Debug: BZ: before microphysics Mk(SO4) bin 1 (kg) = ', Mk(1,1)
-            ENDIF
+            !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+            !      Write (6, *) 'Debug: BZ: before microphysics 1, Nk bin 14 (kg)= ', Nk(14)
+            !      Write (6, *) 'Debug: BZ: before microphysics Mk(SO4) bin 1 (kg) = ', Mk(1,1)
+            !ENDIF
 
             ! Before doing any cond/nucl/coag, check if there's any aerosol in
             ! the current box
@@ -3319,10 +3300,10 @@ CONTAINS
                !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
 
                CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
-               IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: before cond_nuc, Nk bin 14 (kg)= ', Nk(14)
-                  Write (6, *) 'Debug: BZ: before cond_nuc, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
-               ENDIF
+               !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+               !   Write (6, *) 'Debug: BZ: before cond_nuc, Nk bin 14 (kg)= ', Nk(14)
+               !   Write (6, *) 'Debug: BZ: before cond_nuc, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
+               !ENDIF
                CALL COND_NUC(Nk,Mk,Gc,Nkout,Mkout,Gcout,fn,fn1, &
                               H2SO4rate_o,Dt,num_iter,Nknuc,Mknuc,Nkcond,Mkcond, &
                               ionrate, surf_area, BOXVOL, BOXMASS, TEMPTMS, PRES, &
@@ -3332,7 +3313,7 @@ CONTAINS
                IF ( ERRORSWITCH ) THEN
                   !PRINT *,'Aerophys: found error at (i_box, i_x, i_y)',i_box, i_x, i_y
                   WRITE(errMsg, '(A,I0,A,I0,A,I0)') &
-                     'Aerophys, after cond_nuc: found error at i_box=', i_box, &
+                     'Aerophys, after cond_nuc (2-D): found error at i_box=', i_box, &
                      ' i_x=', i_x, &
                      ' i_y=', i_y
                   CALL ERROR_STOP( errMsg, thisLoc)
@@ -3350,10 +3331,10 @@ CONTAINS
       !             IF (SPINUP(14.0) .and. Gcout(jc) /= Gcout(jc) ) THEN
                   IF( SPINUP(14.0) .AND. IT_IS_NAN( Gcout(N) ) ) THEN
                      Gcout(N) = 0.0e+0_fp ! reset Nan to zero during spinup, bc 18/12/23
-                     print*,'Reset Gcout NaN to zero at ',i_box, i_x, i_y
+                     print*,'(2-D): Reset Gcout NaN to zero at ',i_box, i_x, i_y
                   ELSEIF ( SPINUP(14.0) .AND. .not. IT_IS_FINITE( Gcout(N) ) ) THEN
                      Gcout(N) = 0.0e+0_fp ! reset Inf to zero during spinup, bc 18/12/23
-                     print*,'Reset Gcout Inf to zero at ',i_box, i_x, i_y
+                     print*,'(2-D): Reset Gcout Inf to zero at ',i_box, i_x, i_y
                   ELSE
                   ! call check_value( Gcout(N), ERR_IND, ERR_VAR, ERR_MSG )
                   ENDIF
@@ -3394,10 +3375,10 @@ CONTAINS
                   ENDDO
                ENDDO
             ENDIF ! end of cond and nuc !
-            IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-               WRITE (6, *) 'Debug: BZ: after cond_nuc, Nk bin 14 (kg)= ', Nk(14)
-               WRITE (6, *) 'Debug: BZ: after cond_nuc, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
-            ENDIF
+            !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+            !   WRITE (6, *) 'Debug: BZ: after cond_nuc, Nk bin 14 (kg)= ', Nk(14)
+            !   WRITE (6, *) 'Debug: BZ: after cond_nuc, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
+            !ENDIF
             ! nitrogen and sulfur mass checks and fix
             !tot_n_1a = Gc(srtnh4)*14.e+0_fp/17.e+0_fp
             !do k=1,ibins
@@ -3412,7 +3393,7 @@ CONTAINS
             !print *, 'mnfix in tomas_mod:677'
             CALL MNFIX( Nk, Mk, ERRORSWITCH )
             IF ( ERRORSWITCH ) THEN
-               PRINT *,'Aerophys: MNFIX found error at (i_box, i_x, i_y)',i_box, i_x, i_y
+               PRINT *,'Aerophys 2: (2-D): MNFIX found error at (i_box, i_x, i_y)',i_box, i_x, i_y
                IF( .not. SPINUP(14.0) ) THEN
                   CALL ERROR_STOP('AEROPHYS-MNFIX (2)','After cond/nucl')
                ELSE
@@ -3426,13 +3407,13 @@ CONTAINS
             !if(printdebug .and. i==iob.and.j==job.and.l==lob) ERRORSWITCH =.TRUE.
             IF( COAG )  THEN
                CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
-               IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: before coagulation, Nk bin 14 (kg)= ', Nk(14)
-                  Write (6, *) 'Debug: BZ: before coagulation, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
-               ENDIF
+               !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+               !   Write (6, *) 'Debug: BZ: before coagulation, Nk bin 14 (kg)= ', Nk(14)
+               !   Write (6, *) 'Debug: BZ: before coagulation, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
+               !ENDIF
                CALL MULTICOAG( Dt, Nk, Mk, BOXVOL, PRES, TEMPTMS, ERRORSWITCH )
                IF ( ERRORSWITCH ) THEN
-                  print*,'error after coagulation at (i_box, i_x, i_y) = ',i_box, i_x, i_y
+                  print*,'(2-D) error after coagulation at (i_box, i_x, i_y) = ',i_box, i_x, i_y
                   !CALL DEBUGPRINT( Nk, Mk, I, J, L,'After coagulation' )
                ENDIF
                
@@ -3444,7 +3425,7 @@ CONTAINS
                CALL MNFIX( NK, MK, ERRORSWITCH )
 
                IF ( ERRORSWITCH ) THEN
-                  PRINT *,'MNFIX found error at (i_box, i_x, i_y) = ',i_box, i_x, i_y
+                  PRINT *,'Aerophys 3: (2-D): MNFIX found error at (i_box, i_x, i_y) = ',i_box, i_x, i_y
                   IF( .not. SPINUP(14.0) ) THEN
                      CALL ERROR_STOP('AEROPHYS-MNFIX (3)', 'After COAGULATION'  )
                   ELSE
@@ -3453,10 +3434,10 @@ CONTAINS
                ENDIF
 
             ENDIF ! end of coagulation
-            IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: after coagulation, Nk bin 14 (kg)= ', Nk(14)
-                  Write (6, *) 'Debug: BZ: after coagulation, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
-            ENDIF
+            !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+            !      Write (6, *) 'Debug: BZ: after coagulation, Nk bin 14 (kg)= ', Nk(14)
+            !      Write (6, *) 'Debug: BZ: after coagulation, Mk(SO4) bin 1 (kg)= ', Mk(1,1)
+            !ENDIF
             ! Do water eqm at appropriate times
             CALL EZNH3EQM( Gc, Mk )
             CALL EZWATEREQM ( MK, RHTOMAS )
@@ -3474,7 +3455,7 @@ CONTAINS
             !print *, 'mnfix in tomas_mod:758'
             CALL MNFIX(NK,MK,ERRORSWITCH)
             IF ( ERRORSWITCH ) THEN
-               PRINT *,'End of Aerophys: MNFIX found error at (i_box, i_x, i_y)',i_box, i_x, i_y
+               PRINT *,'End of Aerophys 4 (2=D): MNFIX found error at (i_box, i_x, i_y)',i_box, i_x, i_y
                IF( .not. SPINUP(14.0) ) THEN
                   CALL ERROR_STOP('AEROPHYS-MNFIX (4)', 'End of microphysics')
                ELSE
@@ -3488,11 +3469,11 @@ CONTAINS
                id_tracer = id_NK01_p + (ibin-1) * nspc_p_tomas_tracer
                box_concnt_2D(i_x,i_y,id_tracer) = Nk(ibin)*Avo*1.0E+3_fp/BOXVOL
                DO i_species = 1, ICOMPHARD -2 
-               id_tracer = id_NK01_p+i_species+(ibin-1)*nspc_p_tomas_tracer
-               spc_name = spc_names_p(id_NK01_p+i_species)
-               id_tracer_1   = Ind_(TRIM(spc_name))
-               molwt_spc       = State_Chm%SpcData(id_tracer_1)%Info%MW_g
-               box_concnt_2D(i_x,i_y,id_tracer) = MK(ibin,i_species)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
+                  id_tracer = id_NK01_p+i_species+(ibin-1)*nspc_p_tomas_tracer
+                  spc_name = spc_names_p(id_NK01_p+i_species)
+                  id_tracer_1   = Ind_(TRIM(spc_name))
+                  molwt_spc       = State_Chm%SpcData(id_tracer_1)%Info%MW_g
+                  box_concnt_2D(i_x,i_y,id_tracer) = MK(ibin,i_species)*1.0E+3_fp/molwt_spc * Avo/BOXVOL
                ENDDO
                id_tracer = id_AW01_p + (ibin-1) * nspc_p_tomas_tracer
                molwt_spc       =  State_Chm%SpcData(id_AW01)%Info%MW_g
@@ -3516,58 +3497,60 @@ CONTAINS
             ! plus tiny amount CEPS in case zero causes some problem
             molwt_spc       =  State_Chm%SpcData(Ind_('NH3'))%Info%MW_g
             box_concnt_2D(i_x,i_y,id_NH3_p) = GC(SRTNH4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL  + CEPS !MUST CHECK THIS!! (win,9/26/08)
-            IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
-                  Write (6, *) 'Debug: BZ: after microphysics, Nk bin 14 (molec)= ', box_concnt_2D(i_x,i_y, 10+1+(14-1)*nspc_p_tomas_tracer)
-                  Write (6, *) 'Debug: BZ: after microphysics Mk(SO4) bin 1 (molec)= ', box_concnt_2D(i_x,i_y, 12)
-            ENDIF
+            !IF ((i_x .eq. 1) .AND. (i_y.eq.2)) THEN
+            !      Write (6, *) 'Debug: BZ: after microphysics, Nk bin 14 (molec)= ', box_concnt_2D(i_x,i_y, 10+1+(14-1)*nspc_p_tomas_tracer)
+            !      Write (6, *) 'Debug: BZ: after microphysics Mk(SO4) bin 1 (molec)= ', box_concnt_2D(i_x,i_y, 12)
+            !ENDIF
          ENDDO
       ENDDO
       !$OMP END PARALLEL DO
       DO ibin = 1, nbins
-         mass_SF_bin(ibin) = mass_SF_bin(ibin) + &
-         SUM(Plume2d_curr%CONCNT2d(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
-         mass_NK_bin(ibin) = mass_NK_bin(ibin) + &
-         SUM(Plume2d_curr%CONCNT2d(:,:, 10+1+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
-         mass_MK_bin(ibin) = mass_MK_bin(ibin) + &
-         SUM(Plume2d_curr%CONCNT2d(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D * 1.375_fp + &
-         SUM(Plume2d_curr%CONCNT2d(:,:, 10+3+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D 
+         mass_SF_bin_2D(ibin) = mass_SF_bin_2D(ibin) + &
+         SUM(box_concnt_2D(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
+         mass_NK_bin_2D(ibin) = mass_NK_bin_2D(ibin) + &
+         SUM(box_concnt_2D(:,:, 10+1+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
+         mass_MK_bin_2D(ibin) = mass_MK_bin_2D(ibin) + &
+         SUM(box_concnt_2D(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D * 1.375_fp + &
+         SUM(box_concnt_2D(:,:, 10+3+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D 
       ENDDO
-      Plume2d_curr%CONCNT2d = box_concnt_2D
+      mass_S_H2SO4_2D = mass_S_H2SO4_2D + &
+                SUM(box_concnt_2D(:,:, id_H2SO4_p)) * Vgrid_2D
+#endif
+      Plume2d_curr%CONCNT2d = box_concnt_2D 
       Plume2d_curr => Plume2d_curr%next
    ENDDO
 
-#endif
 
-      DO WHILE(ASSOCIATED(Plume1d_curr))
-         i_box         = Plume1d_curr%label
-         i_lon         = Plume1d_curr%lon_ind
-         i_lat         = Plume1d_curr%lat_ind
-         i_lev         = Plume1d_curr%lev_ind
-         WRITE(6,*) 'debug (BZ): solve plume Chemistry in plume 1-D box: ', i_box
-         !Test if we need to do the chemistry for box (I,J,L), otherwise move onto the next box.
-         ! MaxChemLev = MaxStratLev = 59 
-         ! Hard coded in GeosUtil/gc_grid_mod.F90
-         ! BZ: Maybe if plume reach out of chem grid, directly release species to Eulerian grid and delete the plume box?
-         IF ( .not. State_Met%InChemGrid(i_lon,i_lat,i_lev) ) THEN
-            WRITE(6,*) 'Debug (BZ): 1-D plume segment outside chem grid: (i_box, i_lon, i_lat, i_lev): ',    &
-            Plume1d_curr%label, i_lon, i_lat, i_lev
-            Plume1d_curr%IsDissolve = .True.
-            plume1d_curr => plume1d_curr%next
-            CYCLE
-         ENDIF
+   DO WHILE(ASSOCIATED(Plume1d_curr))
+      i_box         = Plume1d_curr%label
+      i_lon         = Plume1d_curr%lon_ind
+      i_lat         = Plume1d_curr%lat_ind
+      i_lev         = Plume1d_curr%lev_ind
+      WRITE(6,*) 'debug (BZ): solve plume Chemistry in plume 1-D box: ', i_box
+      !Test if we need to do the chemistry for box (I,J,L), otherwise move onto the next box.
+      ! MaxChemLev = MaxStratLev = 59 
+      ! Hard coded in GeosUtil/gc_grid_mod.F90
+      ! BZ: Maybe if plume reach out of chem grid, directly release species to Eulerian grid and delete the plume box?
+      IF ( .not. State_Met%InChemGrid(i_lon,i_lat,i_lev) ) THEN
+         WRITE(6,*) 'Debug (BZ): 1-D plume segment outside chem grid: (i_box, i_lon, i_lat, i_lev): ',    &
+         Plume1d_curr%label, i_lon, i_lat, i_lev
+         Plume1d_curr%IsDissolve = .True.
+         plume1d_curr => plume1d_curr%next
+         CYCLE
+      ENDIF
 
-         Vgrid_1D        =  Plume1d_curr%Ra * Plume1d_curr%Rb * Plume1d_curr%length * 1.0e+6_fp ! [cm3]
-         Vgrid_EU        =  State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
-         K_SO2_OH        =  RXNRATE_CONST_KPP(i_lon,i_lat,i_lev , SO2_OH_RXN_ID)
-         box_concnt_1D   =  Plume1d_curr%CONCNT1d
+      Vgrid_1D        =  Plume1d_curr%Ra * Plume1d_curr%Rb * Plume1d_curr%length * 1.0e+6_fp ! [cm3]
+      Vgrid_EU        =  State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp
+      K_SO2_OH        =  RXNRATE_CONST_KPP(i_lon,i_lat,i_lev , SO2_OH_RXN_ID)
+      box_concnt_1D   =  Plume1d_curr%CONCNT1d
 #ifdef TOMAS
       ! Before doing chemistry, read background NH3/NH4
-         box_concnt_1D(:,id_NH3_p) = Spc(id_NH3)%Conc(i_lon,i_lat,i_lev)
-         Spc(id_NH3)%Conc(i_lon,i_lat,i_lev) = Spc(id_NH3)%Conc(i_lon,i_lat,i_lev) * &
-                                                      (1 - (Vgrid_1D*n_slab_max)/(Vgrid_EU))
-         box_concnt_1D(:,:,id_NH4_p) = Spc(id_NH4)%Conc(i_lon,i_lat,i_lev)
-         Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) = Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) * &
-                                                      (1 - (Vgrid_1D*n_slab_max)/(Vgrid_EU))
+      box_concnt_1D(:,id_NH3_p) = Spc(id_NH3)%Conc(i_lon,i_lat,i_lev)
+      Spc(id_NH3)%Conc(i_lon,i_lat,i_lev) = Spc(id_NH3)%Conc(i_lon,i_lat,i_lev) * &
+                                                   (1 - (Vgrid_1D*n_slab_max)/(Vgrid_EU))
+      box_concnt_1D(:,:,id_NH4_p) = Spc(id_NH4)%Conc(i_lon,i_lat,i_lev)
+      Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) = Spc(id_NH4)%Conc(i_lon,i_lat,i_lev) * &
+                                                   (1 - (Vgrid_1D*n_slab_max)/(Vgrid_EU))
 #endif
 !#ifdef TOMAS
       !Write (6, *) 'Debug: BZ: before chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
@@ -3585,65 +3568,61 @@ CONTAINS
       !WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of SO4 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO4_p)
       !WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc before Chem: Conc of OH ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_OH_p)
       
-         n_debug_chem     =  0
-         debug_islab      =  0
-         debug_ibox       =  0
-         debug_status     =  0
-         debug_value      =  0.0_fp
-         !$OMP PARALLEL DO           &
-         !$OMP DEFAULT( SHARED     ) &
-         !$OMP PRIVATE(i_slab)&
-         !$OMP PRIVATE(chem_status, chem_debug_value)&
-         !$OMP PRIVATE(C_before_Chem, C_after_Chem)&
-         !!$OMP COLLAPSE( 2                    )
-         !!$OMP SCHEDULE( DYNAMIC, 24          )&
-         !!$OMP REDUCTION( +:n_debug_chem        )
+      n_debug_chem     =  0
+      debug_islab      =  0
+      debug_ibox       =  0
+      debug_status     =  0
+      debug_value      =  0.0_fp
+      !$OMP PARALLEL DO           &
+      !$OMP DEFAULT( SHARED     ) &
+      !$OMP PRIVATE(i_slab)&
+      !$OMP PRIVATE(chem_status, chem_debug_value)&
+      !$OMP PRIVATE(C_before_Chem, C_after_Chem)&
+      !!$OMP COLLAPSE( 2                    )
+      !!$OMP SCHEDULE( DYNAMIC, 24          )&
+      !!$OMP REDUCTION( +:n_debug_chem        )
 
-         DO i_slab = 1, n_slab_max, 1
-            
-            
-            chem_status     =  0
-            chem_debug_value = 0.0_fp
+      DO i_slab = 1, n_slab_max, 1
+         chem_status     =  0
+         chem_debug_value = 0.0_fp
 
-            C_before_Chem(id_SO2_p)     =  box_concnt_1D(i_slab,id_SO2_p)
-            C_before_Chem(id_SO4_p)     =  box_concnt_1D(i_slab,id_SO4_p)
-            C_before_Chem(id_OH_p)      =  box_concnt_1D(i_slab,id_OH_p)
-            C_before_Chem(id_HO2_p)     =  box_concnt_1D(i_slab,id_HO2_p)
-            C_before_Chem(id_PH2SO4_p)  =  0.0_fp
+         C_before_Chem(id_SO2_p)     =  box_concnt_1D(i_slab,id_SO2_p)
+         C_before_Chem(id_SO4_p)     =  box_concnt_1D(i_slab,id_SO4_p)
+         C_before_Chem(id_OH_p)      =  box_concnt_1D(i_slab,id_OH_p)
+         C_before_Chem(id_HO2_p)     =  box_concnt_1D(i_slab,id_HO2_p)
+         C_before_Chem(id_PH2SO4_p)  =  0.0_fp
 
-            C_after_Chem              =  C_before_Chem
-            ! CHEM_SO2_OH_PLUME (dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box) 
-            CALL CHEM_SO2_OH_PLUME( Dt, K_SO2_OH, C_after_Chem(id_SO2_p),       &
-                                       C_after_Chem(id_OH_p), C_after_Chem(id_SO4_p), &
-                                       C_after_Chem(id_HO2_p), C_after_Chem(id_PH2SO4_p), &
-                                       chem_status,chem_debug_value )
+         C_after_Chem              =  C_before_Chem
+         ! CHEM_SO2_OH_PLUME (dt, K, SO2, OH, SO4, HO2, PH2SO4, i_x, i_y, i_box) 
+         CALL CHEM_SO2_OH_PLUME( Dt, K_SO2_OH, C_after_Chem(id_SO2_p),       &
+                                    C_after_Chem(id_OH_p), C_after_Chem(id_SO4_p), &
+                                    C_after_Chem(id_HO2_p), C_after_Chem(id_PH2SO4_p), &
+                                    chem_status,chem_debug_value )
 
-            IF ( chem_status /= 0 ) THEN
-               !$OMP CRITICAL(debug_store)
-               IF ( n_debug_chem < n_debug_chem_max ) THEN
-                  n_debug_chem = n_debug_chem + 1
-                  debug_islab(n_debug_chem)     = i_slab
-                  debug_ibox(n_debug_chem)   = i_box
-                  debug_status(n_debug_chem) = chem_status
-                  debug_value(n_debug_chem)  = chem_debug_value
-               ENDIF
-               !$OMP END CRITICAL(debug_store)
+         IF ( chem_status /= 0 ) THEN
+            !$OMP CRITICAL(debug_store)
+            IF ( n_debug_chem < n_debug_chem_max ) THEN
+               n_debug_chem = n_debug_chem + 1
+               debug_islab(n_debug_chem)     = i_slab
+               debug_ibox(n_debug_chem)   = i_box
+               debug_status(n_debug_chem) = chem_status
+               debug_value(n_debug_chem)  = chem_debug_value
             ENDIF
+            !$OMP END CRITICAL(debug_store)
+         ENDIF
 
-            box_concnt_1D(i_slab,id_SO2_p)    = REAL( C_after_Chem(id_SO2_p), kind=fp )
-            box_concnt_1D(i_slab,id_SO4_p)    = REAL( C_after_Chem(id_SO4_p), kind=fp )
-            box_concnt_1D(i_slab,id_HO2_p)    = REAL( C_after_Chem(id_HO2_p), kind=fp )
-            box_concnt_1D(i_slab,id_OH_p)     = REAL( C_after_Chem(id_OH_p), kind=fp )
-            box_concnt_1D(i_slab,id_PH2SO4_p) = REAL( C_after_Chem(id_PH2SO4_p), kind=fp )
-            H2SO4_RATE_2D(i_slab) = C_after_Chem(id_PH2SO4_p) / AVO * 98.e-3_fp * &
-                              (Vgrid_1D) / Dt  ! kg s-1 box-1
-
-            !Plume2d_curr%CONCNT2d(i_x,i_y,id_PH2SO4) = REAL( C_after_integrate(id_PH2SO4), kind=fp )
-         ENDDO
-         !$OMP END PARALLEL DO
+         box_concnt_1D(i_slab,id_SO2_p)    = REAL( C_after_Chem(id_SO2_p), kind=fp )
+         box_concnt_1D(i_slab,id_SO4_p)    = REAL( C_after_Chem(id_SO4_p), kind=fp )
+         box_concnt_1D(i_slab,id_HO2_p)    = REAL( C_after_Chem(id_HO2_p), kind=fp )
+         box_concnt_1D(i_slab,id_OH_p)     = REAL( C_after_Chem(id_OH_p), kind=fp )
+         box_concnt_1D(i_slab,id_PH2SO4_p) = REAL( C_after_Chem(id_PH2SO4_p), kind=fp )
+         H2SO4_RATE_1D(i_slab) = C_after_Chem(id_PH2SO4_p) / AVO * 98.e-3_fp * &
+                           (Vgrid_1D) / Dt  ! kg s-1 box-1
+      ENDDO
+      !$OMP END PARALLEL DO
       
-         ! Chemistry debug output
-         DO N = 1, n_debug_chem
+      ! Chemistry debug output
+      DO N = 1, n_debug_chem
          SELECT CASE ( debug_status(N) )
          CASE (1)
             WRITE(6,*) "Skip chem: low SO2 at 1-D segment [slab,box]= ", &
@@ -3658,38 +3637,36 @@ CONTAINS
                      debug_islab(N), debug_ibox(N), &
                      " value = ", debug_value(N)
          END SELECT
-         ENDDO
-
-         ! Exchange OH/HO2 with background 
-         mass_OH     = Spc(id_OH)%Conc(i_lon,i_lat,i_lev)*Vgrid_EU +      &
-                           SUM(box_concnt_1D(:,id_OH_p))*Vgrid_1D
-         mass_HO2    = Spc(id_HO2)%Conc(i_lon,i_lat,i_lev)*Vgrid_EU +     &
-                           SUM(box_concnt_1D(:,id_HO2_p))*Vgrid_1D
-
-         full_exchange_conc = mass_OH  / (Vgrid_EU + Vgrid_1D*n_slab_max)
-
-         box_concnt_1D(:,id_OH_p)   = full_exchange_conc * Radical_exc_factor
-         Spc(id_OH)%Conc(i_lon,i_lat,i_lev) = (mass_OH -SUM(box_concnt_1D(:,id_OH_p))*Vgrid_1D ) / &
-                                                Vgrid_EU
-         
-         full_exchange_conc = mass_HO2  / (Vgrid_EU + Vgrid_1D*n_slab_max)
-
-         box_concnt_2D(:,:,id_HO2_p)   = full_exchange_conc * Radical_exc_factor
-         Spc(id_HO2)%Conc(i_lon,i_lat,i_lev) = (mass_HO2 -SUM(box_concnt_1D(:,id_HO2_p))*Vgrid_1D ) / &
-                                                Vgrid_EU
       ENDDO
 
+      ! Exchange OH/HO2 with background 
+      mass_OH     = Spc(id_OH)%Conc(i_lon,i_lat,i_lev)*Vgrid_EU +      &
+                        SUM(box_concnt_1D(:,id_OH_p))*Vgrid_1D
+      mass_HO2    = Spc(id_HO2)%Conc(i_lon,i_lat,i_lev)*Vgrid_EU +     &
+                        SUM(box_concnt_1D(:,id_HO2_p))*Vgrid_1D
+
+      full_exchange_conc = mass_OH  / (Vgrid_EU + Vgrid_1D*n_slab_max)
+
+      box_concnt_1D(:,id_OH_p)   = full_exchange_conc * Radical_exc_factor
+      Spc(id_OH)%Conc(i_lon,i_lat,i_lev) = (mass_OH -SUM(box_concnt_1D(:,id_OH_p))*Vgrid_1D ) / &
+                                             Vgrid_EU
+      
+      full_exchange_conc = mass_HO2  / (Vgrid_EU + Vgrid_1D*n_slab_max)
+
+      box_concnt_1D(:,id_HO2_p)   = full_exchange_conc * Radical_exc_factor
+      Spc(id_HO2)%Conc(i_lon,i_lat,i_lev) = (mass_HO2 -SUM(box_concnt_1D(:,id_HO2_p))*Vgrid_1D ) / &
+                                             Vgrid_EU
+      mass_S_SO2_3_1D = mass_S_SO2_3_1D + SUM(box_concnt_1D(:, id_SO2_p)) * Vgrid_1D
+      mass_S_SO4_3_1D = mass_S_SO4_3_1D + SUM(box_concnt_1D(:, id_SO4_p)) * Vgrid_1D
+      !------------------------------------------------------
+      ! Decide if need to dissolve the plume
+      ! Based on the concentration criteria
+      !------------------------------------------------------
+         
 #ifdef TOMAS
       !Write (6, *) 'Debug: BZ: after chemistry, Nk bin 14 (molec)= ', box_concnt_2D(1,2, 10+1+(14-1)*nspc_p_tomas_tracer)
       !Write (6, *) 'Debug: BZ: after chemistry Mk(SO4) bin 1 (molec)= ', box_concnt_2D(1,2, 12)
       write(6,*) 'debug (BZ): solve plume microphysics in plume 1-D box: ', i_box
-      !DO i_species = 1, nspc_p
-      !  spc_name = spc_names_p(i_species)
-      !  id_tracer   = Ind_(TRIM(spc_name))
-      !  molwt_spc       = State_Chm%SpcData(id_tracer)%Info%MW_g
-      !  ! molec/cm3 -> kg
-      !  box_concnt_2D_kg(:,:,i_species) =  box_concnt_2D(:,:,i_species)*Vgrid_2D/Avo*molwt_spc/1.0E+3_fp
-      !ENDDO
 
       ! TOMAS species unit should be in kg
       ! GC, MK, NK
@@ -3702,7 +3679,7 @@ CONTAINS
       !$OMP PRIVATE( TRANSFER, H2SO4rate_o, NH4bulk, NH3_to_NH4, fn, fn1,num_iter, ionrate, surf_area)       & 
       !$OMP PRIVATE(ERRORSWITCH, PRINTNEG, PRINTDEBUG, ERRSPOT)  &
       !$OMP PRIVATE( ERR_VAR, ERR_MSG, ERR_IND )                     &
-      !$OMP SCHEDULE( DYNAMIC )
+      !!$OMP SCHEDULE( DYNAMIC )
       DO i_slab = 1, n_slab_max, 1
          PRES    = State_Met%PMID(i_lon,i_lat,i_lev)*100.0 ! in Pa
          TEMPTMS = State_Met%T(i_lon,i_lat,i_lev)
@@ -3752,11 +3729,6 @@ CONTAINS
           !GC(SRTSO4) = Spc(id_H2SO4)%Conc(I,J,L)
           
          H2SO4rate_o = H2SO4_RATE_1D(i_slab)  ! [kg s-1]
-         !IF ( H2SO4rate_o .lt. 0.e0 ) THEN
-         !    Print*, 'Debug TOMAS: H2SO4RATE = ', H2SO4rate_o, 'i_box = ', i_box, &
-         !        'i_x = ', i_x, 'i_y = ', i_y
-         !    H2SO4rate_o = 0.e+0_fp
-         !ENDIF
 
          ! nitrogen and sulfur mass checks
          ! get the total mass of N
@@ -3778,10 +3750,9 @@ CONTAINS
          CALL STORENM(Nk, Nkd, Mk, Mkd, Gc, Gcd)
          CALL MNFIX( NK, MK, ERRORSWITCH )
          IF ( ERRORSWITCH ) THEN
-            PRINT *,'Aerophys: MNFIX found error at 1-D plume segment (i_box, i_slab) = ',i_box, i_slab
+            PRINT *,'Aerophys 1 (1-D): MNFIX found error at 1-D plume segment (i_box, i_slab) = ',i_box, i_slab
             CALL ERROR_STOP('AEROPHYS-MNFIX (1)','Enter microphys')
          ENDIF
-
 
          ! Before doing any cond/nucl/coag, check if there's any aerosol in
          ! the current box
@@ -3818,17 +3789,17 @@ CONTAINS
             ERR_MSG = 'After COND_NUC'
             ! check for NaN and Inf (win, 10/4/08)
             DO N = 1, ICOMPHARD
-               ERR_IND(1) = i_box
-               ERR_IND(2) = i_x
-               ERR_IND(3) = i_y
-               ERR_IND(4) = 0
+               !ERR_IND(1) = i_box
+               !ERR_IND(2) = i_slab
+               !ERR_IND(3) = 0
+               !ERR_IND(4) = 0
    !             IF (SPINUP(14.0) .and. Gcout(jc) /= Gcout(jc) ) THEN
                IF( SPINUP(14.0) .AND. IT_IS_NAN( Gcout(N) ) ) THEN
                   Gcout(N) = 0.0e+0_fp ! reset Nan to zero during spinup, bc 18/12/23
-                  print*,'Reset Gcout NaN to zero at ',i_box, i_x, i_y
+                  print*,'(1-D) Reset Gcout NaN to zero at ',i_box, i_slab
                ELSEIF ( SPINUP(14.0) .AND. .not. IT_IS_FINITE( Gcout(N) ) ) THEN
                   Gcout(N) = 0.0e+0_fp ! reset Inf to zero during spinup, bc 18/12/23
-                  print*,'Reset Gcout Inf to zero at ',i_box, i_x, i_y
+                  print*,'(1-D) Reset Gcout Inf to zero at ',i_box, i_slab
                ELSE
                ! call check_value( Gcout(N), ERR_IND, ERR_VAR, ERR_MSG )
                ENDIF
@@ -3885,7 +3856,7 @@ CONTAINS
          !print *, 'mnfix in tomas_mod:677'
          CALL MNFIX( Nk, Mk, ERRORSWITCH )
          IF ( ERRORSWITCH ) THEN
-            PRINT *,'Aerophys: MNFIX found error at (i_box, i_slab)',i_box, i_slab
+            PRINT *,'Aerophys 2 (1-D): MNFIX found error at (i_box, i_slab)',i_box, i_slab
             IF( .not. SPINUP(14.0) ) THEN
                CALL ERROR_STOP('AEROPHYS-MNFIX (2), 1-D','After cond/nucl')
             ELSE
@@ -3913,7 +3884,7 @@ CONTAINS
             CALL MNFIX( NK, MK, ERRORSWITCH )
 
             IF ( ERRORSWITCH ) THEN
-               PRINT *,'MNFIX found error at (i_box, i_slab) = ',i_box, i_slab
+               PRINT *,'Aerophys 3 (1-D): MNFIX found error at (i_box, i_slab) = ',i_box, i_slab
                IF( .not. SPINUP(14.0) ) THEN
                   CALL ERROR_STOP('AEROPHYS-MNFIX (3)', 'After COAGULATION'  )
                ELSE
@@ -3940,7 +3911,7 @@ CONTAINS
          !print *, 'mnfix in tomas_mod:758'
          CALL MNFIX(NK,MK,ERRORSWITCH)
          IF ( ERRORSWITCH ) THEN
-            PRINT *,'End of Aerophys: MNFIX found error at (i_box, i_slab)',i_box, i_slab
+            PRINT *,'End of Aerophys (1-D): MNFIX found error at (i_box, i_slab)',i_box, i_slab
             IF( .not. SPINUP(14.0) ) THEN
                CALL ERROR_STOP('AEROPHYS-MNFIX (4)', 'End of microphysics')
             ELSE
@@ -3982,25 +3953,30 @@ CONTAINS
          ! Update NH3 gas species (win, 10/6/08)
          ! plus tiny amount CEPS in case zero causes some problem
          molwt_spc       =  State_Chm%SpcData(Ind_('NH3'))%Info%MW_g
-         box_concnt_1D(i_slab,,id_NH3_p) = GC(SRTNH4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL  + CEPS !MUST CHECK THIS!! (win,9/26/08)
+         box_concnt_1D(i_slab,id_NH3_p) = GC(SRTNH4)*1.0E+3_fp/molwt_spc * Avo/BOXVOL  + CEPS !MUST CHECK THIS!! (win,9/26/08)
       ENDDO
       !$OMP END PARALLEL DO
+       DO ibin = 1, nbins
+         mass_SF_bin_1D(ibin) = mass_SF_bin_1D(ibin) + &
+         SUM(box_concnt_1D(:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D
+         mass_NK_bin_1D(ibin) = mass_NK_bin_1D(ibin) + &
+         SUM(box_concnt_1D(:, 10+1+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D
+         mass_MK_bin_1D(ibin) = mass_MK_bin_1D(ibin) + &
+         SUM(box_concnt_1D(:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D * 1.375_fp + &
+         SUM(box_concnt_1D(:, 10+3+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D 
+      ENDDO
+      mass_S_H2SO4_1D = mass_S_H2SO4_1D + &
+                SUM(box_concnt_1D(:, id_H2SO4_p)) * Vgrid_1D
 #endif
       Plume1d_curr%CONCNT1d = box_concnt_1D
       Plume1d_curr => Plume1d_curr%next
-   ENDDO ! DO WHILE(ASSOCIATED(Plume1d_curr))
-         
-
-
-
+   ENDDO ! DO WHILE(ASSOCIATED(Plume1d_curr))         
       !========================================================================
       ! Temporary implement TOMAS microphysics here so it can be moved to 
       ! a separate module if necessary
       ! TOMAS module: AEROPHYS                            
       !========================================================================
-      !
-
-                                            
+      !                                           
 !       DO i_y = 1, n_y_max, 1
 !         DO i_x = 1, n_x_max, 1
 !       ! Some species (counter or diagnostic species) needed to be zero out before solving KPP chemistry
@@ -4600,12 +4576,10 @@ CONTAINS
       !WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of SO2 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO2_p)
       !WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of SO4 ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_SO4_p)
       !WRITE(6,*) 'Debug (BZ): Plume box 2d : ',Plume2d_curr%label,' center conc after Chem: Conc of OH ', Plume2d_curr%CONCNT2d(n_x_mid,n_y_mid,id_OH_p)
-      !mass_S_SO2_3 = mass_S_SO2_3 + SUM(Plume2d_curr%CONCNT2d(:,:, id_SO2_p)) * Vgrid_2D
-      !mass_S_SO4_3 = mass_S_SO4_3 + SUM(Plume2d_curr%CONCNT2d(:,:, id_SO4_p)) * Vgrid_2D
+      
 
     !Write (6, *) "Debug: (BZ): In Plume  (After Plume Chem): rate constant for SO2_OH_RXN_ID = ", &
     !    State_Diag%RxnConst(23, 40, 39 ,SO2_OH_RXN_ID)
-
 
     ! deallocate unused space
     IF(allocated(box_concnt_2D)) deallocate(box_concnt_2D)
@@ -4613,6 +4587,7 @@ CONTAINS
     IF(allocated(debug_ix)) deallocate(debug_ix)
     IF(allocated(debug_iy)) deallocate(debug_iy)
     IF(allocated(debug_ibox)) deallocate(debug_ibox)
+    IF(allocated(debug_islab)) deallocate(debug_islab)
     IF(allocated(debug_status)) deallocate(debug_status)
     IF(allocated(debug_value)) deallocate(debug_value)
 
@@ -4664,7 +4639,7 @@ CONTAINS
     real(fp)                      :: conc_background, mass_release
     REAL(fp)                      :: Dt
     REAL(fp)                      :: ConcSlab(n_slab_max)
-    REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff
+    REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff, mass_plume_bg
     REAL(fp)                      :: Xscale, Yscale
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: ErrMsg
@@ -4725,8 +4700,10 @@ CONTAINS
       ! --------------------------------------------------------------------
       IF(Plume2d_curr%IsTransfer) THEN
          ! Creating 1D list
+         Num_Plume1d = Num_Plume1d + 1
+         Num_Plume1d_new = Num_Plume1d_new +1
          ALLOCATE(Plume1d_new)
-         Plume1d_new%LABEL = Num_Plume1d
+         Plume1d_new%LABEL = Num_Plume1d_new
          Plume1d_new%LON = Plume2d_curr%LON
          Plume1d_new%LAT = Plume2d_curr%LAT
          Plume1d_new%LEV = Plume2d_curr%LEV
@@ -4760,14 +4737,25 @@ CONTAINS
             mass_plume_2D = Vgrid_2D * SUM(Plume2d_curr%CONCNT2d(:,:,i_species))
             mass_plume_1D = Vgrid_1D * SUM(Plume1d_new%CONCNT1d(:,i_species))
             mass_plume_diff = mass_plume_1D - mass_plume_2D
-            IF(ABS(mass_plume_diff/mass_plume_2D)>0.01)THEN
-               Write (6, *) "Debug (BZ): More than 1% mass lost from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
+            IF(mass_plume_diff/mass_plume_2D>0.01)THEN
+               Write (6, *) "Debug (BZ): More than 1% mass enter the plume from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
+                     "Species: ", TRIM(spc_names_p_use(i_species)), 'mass_plume_2D= ', mass_plume_2D, &
+                     'mass_plume_1D= ', mass_plume_1D
+            ELSEIF (mass_plume_diff/mass_plume_2D<-0.01)THEN
+               Write (6, *) "Debug (BZ): More than 1% mass leaving the plume from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
                      "Species: ", TRIM(spc_names_p_use(i_species)), 'mass_plume_2D= ', mass_plume_2D, &
                      'mass_plume_1D= ', mass_plume_1D
             ENDIF
+            ! Adjust the mass if mass enter the plume is larger than background total
             ind_spc_GC = Ind_(TRIM(spc_names_p_use(i_species)))
+            mass_plume_bg = Vgrid_EU * Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)
+            IF(mass_plume_diff > mass_plume_bg) THEN
+               Write (6, *) "Debug (BZ): from 2-D to 1-D, mass enter the plume larger than background at i_box = ", Plume2d_curr%label, &
+                     "Species: ", TRIM(spc_names_p_use(i_species)), 'mass_plume_diff= ', mass_plume_diff, &
+                     'mass_plume_bg= ', mass_plume_bg
+            ENDIF
             Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) = Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) * &
-                     (1 + mass_plume_diff/Vgrid_EU)
+                     (1 - mass_plume_diff/Vgrid_EU)
          ENDDO
 
 
@@ -4780,16 +4768,16 @@ CONTAINS
             Plume1d_tail%next => Plume1d_new
             Plume1d_tail      => Plume1d_new
          ENDIF
-         Num_Plume1d = Num_Plume1d + 1
          NULLIFY(Plume1d_new)
 
       ENDIF
 
       !IF((box_life .GT. Critical_day*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
       IF(Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer) THEN
-        mass_S_SO2_r2 = mass_S_SO2_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
+         Num_Plume2d = Num_Plume2d - 1
+        !mass_S_SO2_r2_2D = mass_S_SO2_r2_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
                       !- Plume2d_curr%MassRef2d(id_SO2)
-        mass_S_SO4_r2 = mass_S_SO4_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))  * Vgrid_2D 
+        !mass_S_SO4_r2_2D = mass_S_SO4_r2 + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))  * Vgrid_2D 
                       ! Plume2d_curr%MassRef2d(id_SO4)
         !mass_S_SO2_4 = mass_S_SO2_3 - (SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2))  * Vgrid_2D - &
                       ! Plume2d_curr%MassRef2d(id_SO2))
@@ -4797,7 +4785,8 @@ CONTAINS
                       ! Plume2d_curr%MassRef2d(id_SO4))
 
         ! Release mass in Eulerian grid only if IsDissolve is true
-        IF (Plume2d_curr%IsDissolve) THEN
+         IF (Plume2d_curr%IsDissolve) THEN
+            Num_dissolve_2D = Num_dissolve_2D + 1
             DO i_species = 1, nspc_p
 
                spc_name     = TRIM(spc_names_p_use(i_species))
@@ -4807,23 +4796,23 @@ CONTAINS
                               MAX(0.0_fp, (Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev)* Vgrid_EU + &
                               mass_release) / Vgrid_EU)
             ENDDO
+            mass_S_SO2_r2_2D = mass_S_SO2_r2_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
+            mass_S_SO4_r2_2D = mass_S_SO4_r2_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))  * Vgrid_2D 
          ENDIF
 
         ! Delete the head node
         IF (.NOT. ASSOCIATED(Plume2d_prev)) THEN
-            Num_Plume2d = Num_Plume2d - 1
-            WRITE(6,*)'*** Deleting head node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+            WRITE(6,*)'*** (2-D): Deleting head node: label = ', Plume2d_curr%label
             Plume2d_head => Plume2d_next
          ! Delete middle or tail node
         ELSE 
              Plume2d_prev%next => Plume2d_next
-             Num_Plume2d = Num_Plume2d - 1
              ! If delete the tail node, update the tail pointer
              IF (.NOT.ASSOCIATED(Plume2d_next))THEN
                 Plume2d_tail => Plume2d_prev
-                WRITE(6,*)'*** Deleting tail node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+                WRITE(6,*)'*** (2-D): Deleting tail node: label = ', Plume2d_curr%label
              ELSE
-                WRITE(6,*)'*** Deleting middle node: Num_Plume2d = ', Num_Plume2d, 'label = ', Plume2d_curr%label
+                WRITE(6,*)'*** (2-D): Deleting middle node: label = ', Plume2d_curr%label
              ENDIF
          ENDIF
          DEALLOCATE(Plume2d_curr)
@@ -4848,6 +4837,8 @@ CONTAINS
     DO WHILE(ASSOCIATED(Plume1d_curr))
       Plume1d_next => Plume1d_curr%next
       IF(Plume1d_curr%IsDissolve) THEN
+         Num_Plume1d = Num_Plum1d -1 
+         Num_dissolve_1D = Num_dissolve_1D + 1
          i_lon = Plume1d_curr%lon_ind
          i_lat = Plume1d_curr%lat_ind
          i_lev = Plume1d_curr%lev_ind
@@ -4858,7 +4849,6 @@ CONTAINS
          Vgrid_1D     = box_RA*box_RB*box_length*1.0e+6_fp
          Vgrid_EU     = State_Met%AIRVOL(i_lon,i_lat,i_lev)*1e+6_fp ! [cm3]
          DO i_species = 1, nspc_p
-
             spc_name     = TRIM(spc_names_p_use(i_species))
             ind_spc_GC   = Ind_(TRIM(spc_name))
             mass_release = SUM(Plume1d_curr%CONCNT1d(:,i_species))  * Vgrid_1D
@@ -4868,19 +4858,18 @@ CONTAINS
          ENDDO
         ! Delete the head node
         IF (.NOT. ASSOCIATED(Plume1d_prev)) THEN
-            Num_Plume1d = Num_Plume1d - 1
-            WRITE(6,*)'*** Deleting head node: Num_Plume1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+            
+            WRITE(6,*)'*** (1-D): Deleting head node: label = ', Plume1d_curr%label
             Plume1d_head => Plume1d_next
          ! Delete middle or tail node
         ELSE 
              Plume1d_prev%next => Plume1d_next
-             Num_Plume1d = Num_Plume1d - 1
              ! If delete the tail node, update the tail pointer
              IF (.NOT.ASSOCIATED(Plume1d_next))THEN
                 Plume1d_tail => Plume1d_prev
-                WRITE(6,*)'*** Deleting tail node: Num_Plume1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+                WRITE(6,*)'*** (1-D): Deleting tail node: label = ', Plume1d_curr%label
              ELSE
-                WRITE(6,*)'*** Deleting middle node: Num_Plum1d = ', Num_Plume1d, 'label = ', Plume1d_curr%label
+                WRITE(6,*)'*** (1-D): Deleting middle node: label = ', Plume1d_curr%label
              ENDIF
          ENDIF
          DEALLOCATE(Plume1d_curr)
@@ -4888,6 +4877,7 @@ CONTAINS
       !ELSEIF (splitting plume cross section)
 
       !ELSEIF (splitting plume length)
+         
       ELSE
          Plume1d_prev => Plume1d_curr
          Plume1d_curr => Plume1d_next 
@@ -4958,10 +4948,51 @@ CONTAINS
 
   END SUBROUTINE plume_dissolve_all
 
-  SUBROUTINE lagrange_write_std(am_I_Root, RC)
+  SUBROUTINE lagrange_write_std(time_elapsed)
 
-    LOGICAL,          INTENT(IN   ) :: am_I_Root   ! root CPU?
-    INTEGER,          INTENT(INOUT) :: RC          ! Failure or success
+   !LOGICAL,          INTENT(IN   ) :: am_I_Root   ! root CPU?
+   !INTEGER,          INTENT(INOUT) :: RC          ! Failure or success
+   REAL(fp),          INTENT(INOUT) :: time_elapsed
+   
+   OPEN( File_Smass_IU_2D,      FILE=TRIM( file_Smass_2D   ), STATUS='OLD',  &
+         POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+   WRITE(File_Smass_IU_2D,'(*(ES12.4,1X))') time_elapsed, mass_S_SO2_inj_1D, mass_S_SO2_r1_2D,  mass_S_SO2_r2_2D, & 
+         mass_S_SO2_1_2D, mass_S_SO2_2_2D, mass_S_SO2_3_2D, &
+         mass_S_SO4_inj_2D,  mass_S_SO4_r1_2D,  mass_S_SO4_r2_2D, & 
+         mass_S_SO4_1_2D, mass_S_SO4_2_2D, mass_S_SO4_3_2D
+   OPEN( File_Smass_IU_1D,      FILE=TRIM( file_Smass_1D   ), STATUS='OLD',  &
+         POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+   WRITE(File_Smass_IU_1D,'(*(ES12.4,1X))') time_elapsed, mass_S_SO2_inj_1D, mass_S_SO2_r1_1D,  mass_S_SO2_r2_1D, & 
+         mass_S_SO2_1_1D, mass_S_SO2_2_1D, mass_S_SO2_3_1D, &
+         mass_S_SO4_inj_1D,  mass_S_SO4_r1_1D,  mass_S_SO4_r2_1D, & 
+         mass_S_SO4_1_1D, mass_S_SO4_2_1D, mass_S_SO4_3_1D
+#ifdef TOMAS
+      OPEN( File_SF_bin_IU_2D,      FILE=TRIM( file_SF_bin_2D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_SF_bin_IU_2D, '(*(ES12.4,1X,","))') time_elapsed, (mass_SF_bin_2D(ibin), ibin= 1, nBins), &
+                  mass_S_H2SO4_2D
+
+      OPEN( File_NK_bin_IU_2D,      FILE=TRIM( file_NK_bin_2D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_NK_bin_IU_2D, '(*(ES12.4,1X,","))') time_elapsed, (mass_NK_bin_2D(ibin), ibin= 1, nBins)
+
+      OPEN( File_MK_bin_IU_2D,      FILE=TRIM( file_MK_bin_2D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_MK_bin_IU_2D, '(*(ES12.4,1X,","))') time_elapsed, (mass_MK_bin_2D(ibin), ibin= 1, nBins)
+
+      OPEN( File_SF_bin_IU_1D,      FILE=TRIM( file_SF_bin_1D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_SF_bin_IU_1D, '(*(ES12.4,1X,","))') time_elapsed, (mass_SF_bin_1D(ibin), ibin= 1, nBins), &
+                  mass_S_H2SO4_1D
+
+      OPEN( File_NK_bin_IU_1D,      FILE=TRIM( file_NK_bin_1D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_NK_bin_IU_1D, '(*(ES12.4,1X,","))') time_elapsed, (mass_NK_bin_1D(ibin), ibin= 1, nBins)
+
+      OPEN( File_MK_bin_IU_1D,      FILE=TRIM( file_MK_bin_1D   ), STATUS='OLD',  &
+          POSITION='APPEND', FORM='FORMATTED',    ACCESS='SEQUENTIAL' )
+      WRITE(File_MK_bin_IU_1D, '(*(ES12.4,1X,","))') time_elapsed, (mass_MK_bin_1D(ibin), ibin= 1, nBins)
+#endif
 
   END SUBROUTINE lagrange_write_std
 !------------------------------------------------------------------
@@ -5037,10 +5068,10 @@ END FUNCTION GetInjectionLat
       IF(box_alpha>=1.75*PI)THEN
         if(box_lon>=X_mid(i_lon))then
           next_i_lon = i_lon + 1
-          DX_m   = DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         else
           next_i_lon = i_lon - 1
-          DX_m   = -1*DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = -1*DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         endif
 
         next_i_lat = i_lat
@@ -5056,10 +5087,10 @@ END FUNCTION GetInjectionLat
       ELSEIF(box_alpha>=1.25*PI)THEN
         if(box_lat>=Y_mid(i_lat))then
           next_i_lat = i_lat + 1
-          DY_m   = DY/360.0 * 2*PI*Re
+          DY_m   = DY_GC/360.0 * 2*PI*Re
         else
           next_i_lat = i_lat - 1
-          DY_m   = -1*DY/360.0 * 2*PI*Re
+          DY_m   = -1*DY_GC/360.0 * 2*PI*Re
         endif
 
         next_i_lon = i_lon
@@ -5075,10 +5106,10 @@ END FUNCTION GetInjectionLat
       ELSEIF(box_alpha>=0.75*PI)THEN
         if(box_lon>=X_mid(i_lon))then
           next_i_lon = i_lon + 1
-          DX_m   = DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         else
           next_i_lon = i_lon - 1
-          DX_m   = -1*DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = -1*DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         endif
 
         next_i_lat = i_lat
@@ -5094,10 +5125,10 @@ END FUNCTION GetInjectionLat
       ELSEIF(box_alpha>=0.25*PI)THEN
         if(box_lat>=Y_mid(i_lat))then
           next_i_lat = i_lat + 1
-          DY_m   = DY/360.0 * 2*PI*Re
+          DY_m   = DY_GC/360.0 * 2*PI*Re
         else
           next_i_lat = i_lat - 1
-          DY_m   = -1*DY/360.0 * 2*PI*Re
+          DY_m   = -1*DY_GC/360.0 * 2*PI*Re
         endif
 
         next_i_lon = i_lon
@@ -5113,10 +5144,10 @@ END FUNCTION GetInjectionLat
       ELSE
         if(box_lon>=X_mid(i_lon))then
           next_i_lon = i_lon + 1
-          DX_m   = DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         else
           next_i_lon = i_lon - 1
-          DX_m   = -1*DX/360.0 * 2*PI *Re*COS(box_lat/180*PI)
+          DX_m   = -1*DX_GC/360.0 * 2*PI *Re*COS(box_lat/180*PI)
         endif
 
         next_i_lat = i_lat
@@ -5768,7 +5799,7 @@ END FUNCTION GetInjectionLat
     real(fp) :: curr_xy, Dxy, XY_edge2
     Find_iLonLat = INT( (curr_xy - (XY_edge2 - Dxy)) / Dxy )+1
     ! Notice the difference between INT(), FLOOR(), AINT()
-    ! for lon: Xedge_Sec - DX = Xedge_first
+    ! for lon: Xedge_Sec - DX_GC = Xedge_first
     return
   end function
 
@@ -6285,7 +6316,7 @@ END FUNCTION GetInjectionLat
         Y2d_edge(4) = ( Y2d(i,j) + Y2d(i-1,j+1) )/2
 
 
-	! Check whether target grid cell area is equal to Dx*Dy
+	! Check whether target grid cell area is equal to Dx_GC*Dy_gc
 	Area_target = 							&
 	    Heron_Formula( X2d_edge(1), Y2d_edge(1), 			&
 		X2d_edge(3), Y2d_edge(3), X2d_edge(2), Y2d_edge(2) ) 	&
