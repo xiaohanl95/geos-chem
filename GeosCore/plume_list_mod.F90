@@ -46,11 +46,11 @@ MODULE Plume_list_mod
     REAL(fp)                                     :: LENGTH        = MISSING
     REAL(fp)                                     :: ALPHA         = MISSING
     REAL(fp)                                     :: LIFE          = MISSING
-    REAL(fp)                                     :: RA            = MISSING
-    REAL(fp)                                     :: RB            = MISSING
-    REAL(fp)                                     :: THETA         = MISSING
-    REAL(fp), DIMENSION(:,:), ALLOCATABLE        :: CONCNT1d ! [n_slab_max,n_species]
-    REAL(fp), DIMENSION(:), ALLOCATABLE          :: MassRef1d  ! [n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE          :: RB                                 ! [n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE          :: RA                                 ! [n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE          :: THETA                              ! [n_species]
+    REAL(fp), DIMENSION(:,:), ALLOCATABLE        :: CONCNT1d                           ! [n_slab_max,n_species]
+    REAL(fp), DIMENSION(:), ALLOCATABLE          :: MassRef1d                          ! [n_species]
 
     TYPE(Plume1d_list), POINTER                  :: next          => NULL()
 
