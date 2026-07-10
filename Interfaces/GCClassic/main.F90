@@ -1624,11 +1624,13 @@ PROGRAM GEOS_Chem
           ! after all Eulerian processes (transport, mixing, etc.) before chemistry.
           !==============================================================================================
           !CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-          CALL plume_inject_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-          ! Trap potential errors
-          IF ( RC /= GC_SUCCESS ) THEN
-             ErrMsg = 'Error encountered in "plume_inject_box"!'
-             CALL Error_Stop( ErrMsg, ThisLoc )
+          IF ( ITS_TIME_FOR_DYN() ) THEN 
+            CALL plume_inject_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+            ! Trap potential errors
+            IF ( RC /= GC_SUCCESS ) THEN
+               ErrMsg = 'Error encountered in "plume_inject_box"!'
+               CALL Error_Stop( ErrMsg, ThisLoc )
+            ENDIF
           ENDIF
           
           
@@ -1666,12 +1668,14 @@ PROGRAM GEOS_Chem
           ! Unit conversion from kg/kg dry to molec/cm3 is moved inside the lagrange_mod
           ! Run physics, chemistry inside the plume, dissolve plume and release species if condition met
           !==============================================================================================
-          CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-          ! Trap potential errors
-          IF ( RC /= GC_SUCCESS ) THEN
-             ErrMsg = 'Error encountered in "plume_model_box"!'
-             CALL Error_Stop( ErrMsg, ThisLoc )
-          ENDIF
+          IF ( ITS_TIME_FOR_DYN() ) THEN 
+            CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+            ! Trap potential errors
+            IF ( RC /= GC_SUCCESS ) THEN
+               ErrMsg = 'Error encountered in "plume_model_box"!'
+               CALL Error_Stop( ErrMsg, ThisLoc )
+            ENDIF
+         ENDIF
        ENDIF
 
        !=====================================================================

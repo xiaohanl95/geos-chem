@@ -1586,12 +1586,12 @@ CONTAINS
     ! Debug: BZ
     ! Flag_Prev = State_Diag%Archive_RxnConst
     ! State_Diag%Archive_RxnConst = Flag_Prev
-     Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): rate constant for RXN 202 = ", &
-        RXNRATE_CONST_KPP(23, 40, 39 ,202)
-     Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): SpeciesConc before KPP for SO4, id: ", &
-        ind_SO4, "; rate: ", SpcConc_BEFORE_KPP(23, 40, 39 ,ind_SO4)
-     Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): SpeciesConc after KPP for SO4, id: ", &
-        ind_SO4, "; rate: ", SpcConc_AFTER_KPP(23, 40, 39 ,ind_SO4)
+     !Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): rate constant for RXN 202 = ", &
+     !   RXNRATE_CONST_KPP(23, 40, 39 ,202)
+     !Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): SpeciesConc before KPP for SO4, id: ", &
+     !   ind_SO4, "; rate: ", SpcConc_BEFORE_KPP(23, 40, 39 ,ind_SO4)
+     !Write (6, *) "Debug: (BZ): Do_Chemistry  (after main loop): SpeciesConc after KPP for SO4, id: ", &
+     !   ind_SO4, "; rate: ", SpcConc_AFTER_KPP(23, 40, 39 ,ind_SO4)
 
     !=======================================================================
     ! Return gracefully if integration failed 2x anywhere

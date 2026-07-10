@@ -3130,7 +3130,7 @@ CONTAINS
        Mkf(1,spec) = Mk1(1,spec) + mcond
        Nkf(1) = Nk1(1) + mcond/sqrt(xk(1)*xk(2))
        do j=1,icomp
-          if (icomp.ne.spec) then
+          if (j.ne.spec) then ! Bug confirmed by Jeff, (ICOMPHARD.ne.spec) -> (j.ne.spec)
              Mkf(1,j) = Mk1(1,j)
           endif
        enddo
