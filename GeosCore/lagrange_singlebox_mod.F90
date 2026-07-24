@@ -153,6 +153,8 @@ MODULE Lagrange_singlebox_Mod
   INTEGER               :: File_Plume_life_IU_2D  ! Diagnostic file nums, initialized in lagr_init
   INTEGER               :: File_Plume_life_IU_1D  ! Diagnostic file nums, initialized in lagr_init
   INTEGER               :: File_Plume_number_IU   ! Diagnostic file nums, initialized in lagr_init
+  INTEGER               :: File_Plume_location_IU_2D   ! Diagnostic file location, initialized in lagr_init
+  INTEGER               :: File_Plume_location_IU_1D   ! Diagnostic file location, initialized in lagr_init
   ! Variable to track sulfate mass (in molec S)
   ! _inj: injected
   ! _r1: release in entrainment/detrainment (check release in chem?)
@@ -166,15 +168,16 @@ MODULE Lagrange_singlebox_Mod
   ! _5: mass in Plume after Chemical processes
   ! _6: before structure change
   ! _7: mass in plume after structure change
+  ! _8: mass in plume core in 2-D plume box
   REAL(fp) 		          :: mass_S_SO2_inj_2D,   mass_S_SO2_r1_2D,   mass_S_SO2_r2_2D,   mass_S_SO2_r3_2D
   REAL(fp) 		          :: mass_S_SO2_r4
   REAL(fp) 		          :: mass_S_SO2_1_2D,     mass_S_SO2_2_2D,    mass_S_SO2_3_2D,    mass_S_SO2_4_2D
-  REAL(fp) 		          :: mass_S_SO2_5_2D,     mass_S_SO2_6_2D,    mass_S_SO2_7_2D
+  REAL(fp) 		          :: mass_S_SO2_5_2D,     mass_S_SO2_6_2D,    mass_S_SO2_7_2D,    mass_S_SO2_8_2D
 
   REAL(fp) 		          :: mass_S_SO4_inj_2D,   mass_S_SO4_r1_2D,   mass_S_SO4_r2_2D,   mass_S_SO4_r3_2D
   REAL(fp) 		          :: mass_S_SO4_r4 
   REAL(fp) 		          :: mass_S_SO4_1_2D,     mass_S_SO4_2_2D,    mass_S_SO4_3_2D,    mass_S_SO4_4_2D
-  REAL(fp) 		          :: mass_S_SO4_5_2D,     mass_S_SO4_6_2D,    mass_S_SO4_7_2D
+  REAL(fp) 		          :: mass_S_SO4_5_2D,     mass_S_SO4_6_2D,    mass_S_SO4_7_2D,    mass_S_SO4_8_2D
 
   REAL(fp) 		          :: mass_S_SO2_inj_1D,   mass_S_SO2_r1_1D,   mass_S_SO2_r2_1D,   mass_S_SO2_r3_1D
   REAL(fp) 		          :: mass_S_SO2_1_1D,     mass_S_SO2_2_1D,    mass_S_SO2_3_1D,    mass_S_SO2_4_1D
@@ -188,8 +191,8 @@ MODULE Lagrange_singlebox_Mod
   
 
   ! Variables to track plume values (used to convert mass into concentration)
-  ! 1: befor phyhsics 2: after physics  3: after structure change
-  REAL(fp) 		          :: Vgrid_2D_tot_1, Vgrid_2D_tot_2, Vgrid_2D_tot_3
+  ! 1: befor phyhsics 2: after physics  3: after structure change;  4: Volume of plume core in 2-D plume box
+  REAL(fp) 		          :: Vgrid_2D_tot_1, Vgrid_2D_tot_2, Vgrid_2D_tot_3, Vgrid_2D_tot_4
   REAL(fp) 		          :: Vgrid_1D_tot_1, Vgrid_1D_tot_2, Vgrid_1D_tot_3
 
   ! Variables to track initial mass read in plume (in molec), all tracers
@@ -234,6 +237,8 @@ MODULE Lagrange_singlebox_Mod
   CHARACTER(LEN=255)    :: file_Plume_life_2D ! file to track 2-D plume lifetime
   CHARACTER(LEN=255)    :: file_Plume_life_1D ! file to track 1-D plume lifetime
   CHARACTER(LEN=255)    :: file_Plume_number  ! file to track number of plumes
+  CHARACTER(LEN=255)    :: file_Plume_location_2D  ! file to track location of 2-D plumes
+  CHARACTER(LEN=255)    :: file_Plume_location_1D  ! file to track location of 1-D plumes
 
   ! some parameter for sensitive test
   INTEGER, PARAMETER        :: N1_split           = 5            ! Cross-section splitting
@@ -573,6 +578,13 @@ CONTAINS
     file_Smass_2D   = 'Plume_Sulfur_mass_2D.txt'
     OPEN( File_Smass_IU_2D, FILE=TRIM( file_Smass_2D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    WRITE(File_Smass_IU_2D,'(*(A,1X))' ) &
+    'time_elapsed', 'mass_S_SO2_inj',  'mass_S_SO2_r1', 'mass_S_SO2_r2', 'mass_S_SO2_r3', &
+         'mass_S_SO2_7', 'mass_S_SO2_8', &
+         'mass_S_SO4_inj',  'mass_S_SO4_r1',  'mass_S_SO4_r2', 'mass_S_SO4_r3', & 
+         'mass_S_SO4_7', 'mass_S_SO4_8', &
+         'Vgrid_tot_3', 'Vgrid_tot_4', &
+         'mass_S_SO2_r4', 'mass_S_SO4_r4'
     ! Return if there was an error opening the file
     IF ( IOS /= 0 ) THEN
         ! Define error message
@@ -587,6 +599,11 @@ CONTAINS
     file_Smass_1D   = 'Plume_Sulfur_mass_1D.txt'
     OPEN( File_Smass_IU_1D, FILE=TRIM( file_Smass_1D ), STATUS='REPLACE', &
         FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    WRITE(File_Smass_IU_1D,'(*(A,1X))' ) &
+    'time_elapsed', 'mass_S_SO2_inj',  'mass_S_SO2_r1', 'mass_S_SO2_r2', 'mass_S_SO2_r3', &
+         'mass_S_SO2_7', &
+         'mass_S_SO4_inj',  'mass_S_SO4_r1',  'mass_S_SO4_r2', 'mass_S_SO4_r3', & 
+         'mass_S_SO4_7', 'Vgrid_tot_3'
     ! Return if there was an error opening the file
     IF ( IOS /= 0 ) THEN
         ! Define error message
@@ -668,6 +685,33 @@ CONTAINS
     ENDIF
     !CLOSE(File_Plume_number_IU)
 
+    File_Plume_location_IU_2D = findFreeLun()
+    file_Plume_location_2D = 'Plume_location_2D.txt'
+    OPEN( File_Plume_location_IU_2D, FILE=TRIM( file_Plume_location_2D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    WRITE(File_Plume_location_IU_2D,'(A)') & 
+    'ElapsedTime PlumeLabel iLon iLat iLev Lon Lat Lev'
+    ! Return if there was an error opening the file
+    IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ErrMsg  = 'create Plume_location_2D.txt (in lagrange_init_box)'
+        CALL ERROR_STOP( ErrMsg, ThisLoc )
+        RETURN
+    ENDIF
+
+    File_Plume_location_IU_1D = findFreeLun()
+    file_Plume_location_1D = 'Plume_location_1D.txt'
+    OPEN( File_Plume_location_IU_1D, FILE=TRIM( file_Plume_location_1D ), STATUS='REPLACE', &
+        FORM='FORMATTED',  ACCESS='SEQUENTIAL',     IOSTAT=IOS )
+    WRITE(File_Plume_location_IU_1D,'(A)') & 
+    'ElapsedTime PlumeLabel iLon iLat iLev Lon Lat Lev'
+    ! Return if there was an error opening the file
+    IF ( IOS /= 0 ) THEN
+        ! Define error message
+        ErrMsg  = 'create Plume_location_1D.txt (in lagrange_init_box)'
+        CALL ERROR_STOP( ErrMsg, ThisLoc )
+        RETURN
+    ENDIF
     
 !90  FORMAT( /, A                 )
 !95  FORMAT( A                    )
@@ -1307,9 +1351,12 @@ CONTAINS
 
          mass_S_SO2_7_2D        =      0.0_fp
          mass_S_SO4_7_2D        =      0.0_fp
+         mass_S_SO2_8_2D        =      0.0_fp
+         mass_S_SO4_8_2D        =      0.0_fp
          mass_S_SO2_7_1D        =      0.0_fp
          mass_S_SO4_7_1D        =      0.0_fp
          Vgrid_2D_tot_3         =      0.0_fp
+         Vgrid_2D_tot_4         =      0.0_fp
          Vgrid_1D_tot_3         =      0.0_fp
 #ifdef TOMAS
          mass_S_H2SO4_2D       = 0.0_fp
@@ -1479,6 +1526,8 @@ CONTAINS
     CLOSE(File_Plume_life_IU_2D)
     CLOSE(File_Plume_life_IU_1D)
     CLOSE(File_Plume_number_IU)
+    CLOSE(File_Plume_location_IU_2D)
+    CLOSE(File_Plume_location_IU_1D)
     CLOSE(File_SF_bin_IU_2D)
     CLOSE(File_SF_bin_IU_1D)
     CLOSE(File_SF_bin_IU_2D_1D)
@@ -1624,6 +1673,10 @@ CONTAINS
   CHARACTER(LEN=255)     :: ThisLoc
   CHARACTER(LEN=255)     :: spc_name
   
+
+  ! Variables for diagnostic file
+  INTEGER                :: file_2Dconc_NK01_ID_1,    file_2Dconc_NK01_ID_2
+  CHARACTER(LEN=255)     :: file_2Dconc_NK01_1,       file_2Dconc_NK01_2
 
   !CHARACTER(LEN=63)      :: OrigUnit
   
@@ -2168,6 +2221,14 @@ CONTAINS
       'time interval Pdt(s) = ', Pdt, "eddy_h= ", eddy_h, "eddy_v= ", eddy_v, "max_u=", max_u, &
       "CFL_adv= ", CFL_adv, "CFL_dif_h= ", CFL_dif_h, "CFL_dif_v= ", CFL_dif_v, &
       'box = ', box_label, "Pdx = :  ", Pdx, "Pdy = :  ", Pdy, "length = ", box_length
+
+      file_2Dconc_NK01_ID_1 = findFreeLun()
+      WRITE(file_2Dconc_NK01_1,  &
+            '("Plume-2D_NK01_conc_ID_",I0,"_time_", I0,"_beforephys.txt")') &
+            Plume2d_curr%LABEL, NINT(time_elapsed)
+      CALL PLUME_CONC_DIAG_FILES_2D(   &
+            file_2Dconc_NK01_ID_1, file_2Dconc_NK01_1,   &
+            Plume2d_curr%CONCNT2d(:,:, id_NK01_p), RC)
     !-------------------------------------------------------------------
     ! Calculate the advection-diffusion in 2D grids
     !   - Consider flux-limited / positive conservative scheme to enforce 
@@ -2287,8 +2348,15 @@ CONTAINS
             mass_S_SO4_r1_2D = mass_S_SO4_r1_2D + D_mass_plume
          ENDIF
       ENDDO
-
+      
       Plume2d_curr%CONCNT2d    = box_concnt_2D
+      file_2Dconc_NK01_ID_2 = findFreeLun()
+      WRITE(file_2Dconc_NK01_2,  &
+            '("Plume-2D_NK01_conc_ID_",I0,"_time_", I0,"_afterphys.txt")') &
+            Plume2d_curr%LABEL, NINT(time_elapsed)
+      CALL PLUME_CONC_DIAG_FILES_2D(   &
+            file_2Dconc_NK01_ID_2, file_2Dconc_NK01_2,   &
+            Plume2d_curr%CONCNT2d(:,:, id_NK01_p), RC)
 ! #ifdef TOMAS
 !    Write (6, *) 'Debug: BZ:  (2-D test grid) after plume physics, SO4 (molec)= ', box_concnt_2D(x_test,y_test, id_SO4_p)
 !    Write (6, *) 'Debug: BZ: (2-D test grid)after plume physics, Nk bin 15 (molec)= ', box_concnt_2D(x_test,y_test, 53)
@@ -4929,28 +4997,31 @@ CONTAINS
     INTEGER                       :: i_species, n_species, i_tracer
     INTEGER                       :: ind_spc_GC, ind_spc_p, ind_spc_GC_bin1
     INTEGER                       :: Stop_loop
-    
+    INTEGER                       :: N_core
+
     LOGICAL                       :: exe_exit
 
-    real(fp)                      :: box_lon, box_lat, box_lev
-    real(fp)                      :: box_length, box_alpha
-    real(fp)                      :: box_extra, box_life, box_label
+    REAL(fp)                      :: box_lon, box_lat, box_lev
+    REAL(fp)                      :: box_length, box_alpha
+    REAL(fp)                      :: box_extra, box_life, box_label
    ! REAL(fp)                      :: box_RA(nspc_p), box_Rb(nspc_p), box_theta(nspc_p)
     REAL(fp)                      :: box_RA, box_Rb, box_theta
-    real(fp)                      :: Pdx, Pdy
-    real(fp)                      :: Vgrid_EU, Vgrid_2D, Vgrid_1D
-    real(fp)                      :: Vgrid_1D_temp
-    real(fp)                      :: conc_background, mass_release, background_mass
+    REAL(fp)                      :: Pdx, Pdy
+    REAL(fp)                      :: Vgrid_EU, Vgrid_2D, Vgrid_1D
+    REAL(fp)                      :: Vgrid_1D_temp
+    REAL(fp)                      :: conc_background, mass_release, background_mass
     REAL(fp)                      :: Dt
     REAL(fp)                      :: ConcSlab(n_slab_max)
     REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff, mass_plume_bg
     REAL(fp)                      :: Xscale, Yscale
+    REAL(fp)                      :: C99, Core_Threshold
+    
     CHARACTER(LEN=255)            :: spc_name
     CHARACTER(LEN=255)            :: ErrMsg
     CHARACTER(LEN=255)            :: ThisLoc
 
-    real(fp), dimension(:,:,:), allocatable :: box_concnt_2D
-    real(fp), dimension(:,:), allocatable   :: box_concnt_1D
+    REAL(fp), DIMENSION(:,:,:), ALLOCATABLE :: box_concnt_2D
+    REAL(fp), DIMENSION(:,:), ALLOCATABLE   :: box_concnt_1D
 
     TYPE(Plume2d_list), POINTER :: Plume2d_next, Plume2d_curr, Plume2d_prev
     TYPE(Plume1d_list), POINTER :: Plume1d_next, Plume1d_curr, Plume1d_prev, Plume1d_new
@@ -5035,7 +5106,10 @@ CONTAINS
       ! mass_S_SO4_6_2D = mass_S_SO4_6_2D + SUM(Plume2d_curr%CONCNT2D(:,:, id_SO4_p)) * Vgrid_2D
 
       Plume2d_next => Plume2d_curr%next
-
+      WRITE(File_Plume_location_IU_2D,'(5(I0,1X),3(F10.3, 1X))') &
+            NINT(time_elapsed), Plume2d_curr%LABEL, &
+            Plume2d_curr%lon_ind, Plume2d_curr%lat_ind, Plume2d_curr%lev_ind, &
+            Plume2d_curr%LON, Plume2d_curr%LAT, Plume2d_curr%LEV
       ! Below print 2-D conc matrix in each plume, turn off to avoid massive output files
       !file_2Dconc_SO4_ID = findFreeLun()
       !WRITE(file_2Dconc_SO4,'("Plume-2D_SO4_conc_",I0,".txt")') NINT(time_elapsed)
@@ -5265,6 +5339,20 @@ CONTAINS
          mass_S_SO2_7_2D = mass_S_SO2_7_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))*Vgrid_2D
          mass_S_SO4_7_2D = mass_S_SO4_7_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))*Vgrid_2D
          Vgrid_2D_tot_3  = Vgrid_2D_tot_3 + Vgrid_2D*n_x_max*n_y_max
+
+         C99                 =     Compute_C99_2D(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))
+         Core_Threshold      =     0.01_fp * C99
+         N_Core              =     COUNT(Plume2d_curr%CONCNT2d(:,:,id_SO2_p) >= Core_Threshold)
+         mass_S_SO2_8_2D     =     mass_S_SO2_8_2D + SUM(                                               &
+                                   Plume2d_curr%CONCNT2d(:,:,id_SO2_p),                                 &
+                                   MASK = Plume2d_curr%CONCNT2d(:,:,id_SO2_p) >= Core_Threshold         &
+                                   ) *Vgrid_2D
+         ! Define the plume core based on SO2 concentration
+         mass_S_SO4_8_2D     =     mass_S_SO4_8_2D + SUM(                                               &
+                                   Plume2d_curr%CONCNT2d(:,:,id_SO4_p),                                 &
+                                   MASK = Plume2d_curr%CONCNT2d(:,:,id_SO2_p) >= Core_Threshold         &
+                                   ) *Vgrid_2D
+         Vgrid_2D_tot_4  = Vgrid_2D_tot_4 + Vgrid_2D*N_Core
 #ifdef TOMAS
          DO ibin = 1, nbins
             mass_SF_bin_2D(ibin) = mass_SF_bin_2D(ibin) + &
@@ -5331,6 +5419,12 @@ CONTAINS
       ! mass_S_SO4_6_1D = mass_S_SO4_6_1D + SUM(Plume1d_curr%CONCNT1D(:,id_SO4_p)) * Vgrid_1D
 
       Plume1d_next => Plume1d_curr%next
+
+      WRITE(File_Plume_location_IU_1D,'(5(I0,1X),3(F10.3, 1X))') &
+            NINT(time_elapsed), Plume1d_curr%LABEL, &
+            Plume1d_curr%lon_ind, Plume1d_curr%lat_ind, Plume1d_curr%lev_ind, &
+            Plume1d_curr%LON, Plume1d_curr%LAT, Plume1d_curr%LEV
+
       IF(Plume1d_curr%IsDissolve) THEN
          Num_Plume1d = Num_Plume1d -1 
          Num_dissolve_1D = Num_dissolve_1D + 1
@@ -5434,10 +5528,10 @@ CONTAINS
    !       mass_S_SO2_r4, mass_S_SO4_r4
       WRITE(File_Smass_IU_2D,'(*(ES12.4,1X))') time_elapsed, mass_S_SO2_inj_2D, &
          mass_S_SO2_r1_2D,  mass_S_SO2_r2_2D, mass_S_SO2_r3_2D, &
-         mass_S_SO2_7_2D, &
+         mass_S_SO2_7_2D, mass_S_SO2_8_2D, &
          mass_S_SO4_inj_2D,  mass_S_SO4_r1_2D,  mass_S_SO4_r2_2D, mass_S_SO4_r3_2D, & 
-         mass_S_SO4_7_2D, &
-         Vgrid_2D_tot_3, &
+         mass_S_SO4_7_2D, mass_S_SO4_8_2D, &
+         Vgrid_2D_tot_3, Vgrid_2D_tot_4, &
          mass_S_SO2_r4, mass_S_SO4_r4
 
    !OPEN( File_Smass_IU_1D,      FILE=TRIM( file_Smass_1D   ), STATUS='OLD',  &
