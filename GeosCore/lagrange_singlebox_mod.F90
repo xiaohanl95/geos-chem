@@ -1618,8 +1618,8 @@ CONTAINS
   REAL(fp)               :: RK_lon, RK_lat
   REAL(fp)               :: wind_s_shear, Ptemp_shear
   REAL(fp)               :: Cv, Ch, Omega_N, N_BV
-  REAL(fp)               :: eddy_v, eddy_h, eddy_B
-  REAL(fp)               :: CFL, CFL_adv, CFL_dif_h, CFL_dif_v, max_u, CFL_dif_B
+  REAL(fp)               :: eddy_v, eddy_h, eddy_D
+  REAL(fp)               :: CFL, CFL_adv, CFL_dif_h, CFL_dif_v, max_u, CFL_dif_D, adv_term 
   REAL(fp)               :: Pc_middle, Pc_bottom, Pc_top, Pc_left, Pc_right, Pc_update
   REAL(fp)               :: TOMAS_Scale
   REAL(fp)               :: mass_before_clip, mass_after_clip
@@ -2199,7 +2199,8 @@ CONTAINS
          CFL_adv = max_u * Pdt / Pdx
          CFL_dif_h = eddy_h * Pdt / Pdx**2
          CFL_dif_v = eddy_v * Pdt / Pdy**2
-         IF (MAX(CFL_adv, 2.0_fp*(CFL_dif_h+CFL_dif_v))<=0.8_fp) EXIT
+         !IF (MAX(CFL_adv, 2.0_fp*(CFL_dif_h+CFL_dif_v))<=0.8_fp) EXIT
+         IF (CFL_adv + 2.0_fp*(CFL_dif_h+CFL_dif_v)<=0.8_fp) EXIT
          
          Nt = Nt+1
          IF (Nt .gt. 300) THEN
@@ -2217,18 +2218,18 @@ CONTAINS
          ENDIF
          Pdt = Dt/Nt
       ENDDO
-      WRITE(6,*) 'Debug (BZ): (2-D plume) Numbers of substep for advection & diffusion, Nt= ', Nt, &
-      'time interval Pdt(s) = ', Pdt, "eddy_h= ", eddy_h, "eddy_v= ", eddy_v, "max_u=", max_u, &
-      "CFL_adv= ", CFL_adv, "CFL_dif_h= ", CFL_dif_h, "CFL_dif_v= ", CFL_dif_v, &
-      'box = ', box_label, "Pdx = :  ", Pdx, "Pdy = :  ", Pdy, "length = ", box_length
+      ! WRITE(6,*) 'Debug (BZ): (2-D plume) Numbers of substep for advection & diffusion, Nt= ', Nt, &
+      ! 'time interval Pdt(s) = ', Pdt, "eddy_h= ", eddy_h, "eddy_v= ", eddy_v, "max_u=", max_u, &
+      ! "CFL_adv= ", CFL_adv, "CFL_dif_h= ", CFL_dif_h, "CFL_dif_v= ", CFL_dif_v, &
+      ! 'box = ', box_label, "Pdx = :  ", Pdx, "Pdy = :  ", Pdy, "length = ", box_length
 
-      file_2Dconc_NK01_ID_1 = findFreeLun()
-      WRITE(file_2Dconc_NK01_1,  &
-            '("Plume-2D_NK01_conc_ID_",I0,"_time_", I0,"_beforephys.txt")') &
-            Plume2d_curr%LABEL, NINT(time_elapsed)
-      CALL PLUME_CONC_DIAG_FILES_2D(   &
-            file_2Dconc_NK01_ID_1, file_2Dconc_NK01_1,   &
-            Plume2d_curr%CONCNT2d(:,:, id_NK01_p), RC)
+      ! file_2Dconc_NK01_ID_1 = findFreeLun()
+      ! WRITE(file_2Dconc_NK01_1,  &
+      !       '("Plume-2D_NK01_mass_ID_",I0,"_time_", I0,"_beforephys.txt")') &
+      !       Plume2d_curr%LABEL, NINT(time_elapsed)
+      ! CALL PLUME_CONC_DIAG_FILES_2D(   &
+      !       file_2Dconc_NK01_ID_1, file_2Dconc_NK01_1,   &
+      !       Plume2d_curr%CONCNT2d(:,:, id_NK01_p)*Vgrid_2D, RC)
     !-------------------------------------------------------------------
     ! Calculate the advection-diffusion in 2D grids
     !   - Consider flux-limited / positive conservative scheme to enforce 
@@ -2291,18 +2292,37 @@ CONTAINS
               Pc_left   = C2d_bg( i_x-1, i_y  )
              
               CFL       = Pdt*Pu(i_x,i_y)/Pdx
-              Pc_update = Pc_middle           &
-                - 0.5 * CFL    * ( Pc_right - Pc_left )   &
-                + 0.5 * CFL**2 * ( Pc_right - 2*Pc_middle + Pc_left )         &
-                + Pdt*( eddy_h*( Pc_right -2*Pc_middle +Pc_left   ) /(Pdx**2) &
-                       +eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
-              C2d_new(i_x, i_y) = MAX(Pc_update, 0.0_fp)
+              IF (Pu(i_x,i_y) >= 0.0_fp) THEN
+                  adv_term = -CFL * (Pc_middle - Pc_left)
+              ELSE
+                  adv_term = -CFL * (Pc_right - Pc_middle)
+              ENDIF
+              Pc_update = Pc_middle + adv_term          &
+                        + Pdt*( eddy_h*( Pc_right -2*Pc_middle +Pc_left   ) /(Pdx**2) &
+                        + eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
+            !   Pc_update = Pc_middle           &
+            !     - 0.5 * CFL    * ( Pc_right - Pc_left )   &
+            !     + 0.5 * CFL**2 * ( Pc_right - 2*Pc_middle + Pc_left )         &
+            !     + Pdt*( eddy_h*( Pc_right -2*Pc_middle +Pc_left   ) /(Pdx**2) &
+            !            +eddy_v*( Pc_top   -2*Pc_middle +Pc_bottom ) /(Pdy**2) )
+              !C2d_new(i_x, i_y) = MAX(Pc_update, 0.0_fp)
+              ! (BZ) If did not cap, might still have negative values due to rounding issue?
+              C2d_new(i_x, i_y) = Pc_update
               ! update the other half based on vertical symmetry 
               C2d_new(n_x_max2+1-i_x, n_y_max2+1-i_y) = C2d_new(i_x, i_y)
             ENDDO
             ENDDO
             !$OMP END PARALLEL DO
          ENDDO ! DO t1s = 1, NINT(Dt/Pdt)
+         ! IF (i_species == id_NK01_p)THEN
+         !    file_2Dconc_NK01_ID_2 = findFreeLun()
+         !    WRITE(file_2Dconc_NK01_2,  &
+         !          '("Plume-2D_NK01_mass_ID_",I0,"_time_", I0,"_afterphys.txt")') &
+         !          Plume2d_curr%LABEL, NINT(time_elapsed)
+         !    CALL PLUME_CONC_DIAG_FILES_2D(   &
+         !          file_2Dconc_NK01_ID_2, file_2Dconc_NK01_2,   &
+         !          C2d_new(2:n_x_max2-1,2:n_y_max2-1)*Vgrid_2D, RC)
+         ! ENDIF
          !================================================================
          ! Calculate the mass exchange of plume to background cell
          ! Update the concentration in the background and plume
@@ -2350,13 +2370,7 @@ CONTAINS
       ENDDO
       
       Plume2d_curr%CONCNT2d    = box_concnt_2D
-      file_2Dconc_NK01_ID_2 = findFreeLun()
-      WRITE(file_2Dconc_NK01_2,  &
-            '("Plume-2D_NK01_conc_ID_",I0,"_time_", I0,"_afterphys.txt")') &
-            Plume2d_curr%LABEL, NINT(time_elapsed)
-      CALL PLUME_CONC_DIAG_FILES_2D(   &
-            file_2Dconc_NK01_ID_2, file_2Dconc_NK01_2,   &
-            Plume2d_curr%CONCNT2d(:,:, id_NK01_p), RC)
+      
 ! #ifdef TOMAS
 !    Write (6, *) 'Debug: BZ:  (2-D test grid) after plume physics, SO4 (molec)= ', box_concnt_2D(x_test,y_test, id_SO4_p)
 !    Write (6, *) 'Debug: BZ: (2-D test grid)after plume physics, Nk bin 15 (molec)= ', box_concnt_2D(x_test,y_test, 53)
@@ -2771,8 +2785,8 @@ CONTAINS
          DO t1s = 1, Nt
             theta_previous   = box_theta_test
             box_theta_candidate = ATAN( TAN(theta_previous) + wind_s_shear*Dt2 )
-            box_Ra_candidate = box_Ra_test  * (TAN(box_theta_candidate)**2.0+1.0)**0.5 &
-                              / (TAN(theta_previous)**2.0+1.0)**0.5
+            box_Ra_candidate = box_Ra_test  * SQRT(TAN(box_theta_candidate)**2+1.0_fp) &
+                              / SQRT(TAN(theta_previous)**2+1.0_fp)
             box_Rb_candidate = Vgrid_1D/(box_Ra_candidate*box_length*1.0e+6_fp)
             !IF (box_Rb_candidate >= Rb_min_shear) THEN
                box_theta_test = box_theta_candidate
@@ -2780,13 +2794,14 @@ CONTAINS
                box_Rb_test = box_Rb_candidate
             !ENDIF
 
-            eddy_B = eddy_v*SIN(abs(box_theta_test)) + eddy_h*COS(box_theta_test) ! b
-            CFL_dif_B = eddy_B * Dt2 / box_Rb_test**2.0
-            !WRITE(6,*) "Debug (BZ): t1s = ", t1s, "; eddy_B = ", eddy_B, "; Dt2 = ", Dt2, &
-            !            "; CFL_dif_b = ", CFL_dif_b, "; Nt = ", Nt, &
+            eddy_D = eddy_v*SIN(box_theta_test)**2 + &
+                     eddy_h*COS(box_theta_test)**2 
+            CFL_dif_D = eddy_D * Dt2 / box_Rb_test**2
+            !WRITE(6,*) "Debug (BZ): t1s = ", t1s, "; eddy_D = ", eddy_D, "; Dt2 = ", Dt2, &
+            !            "; CFL_dif_D = ", CFL_dif_D, "; Nt = ", Nt, &
             !            "; box_Rb = ", box_Rb_test, "; box_Ra = ", box_Ra_test, "; box_theta = ", box_theta_test
                    
-            IF (CFL_dif_B > 0.5_fp) THEN
+            IF (CFL_dif_D > 0.4_fp) THEN
                CFL_ok = .FALSE.
                EXIT
             ENDIF
@@ -2852,19 +2867,19 @@ CONTAINS
          SpcInfo => State_Chm%SpcData(ind_spc_GC)%Info
 
          C1d_prev(1:n_slab_max) = box_concnt_1D(1:n_slab_max,i_species)
-         C1d_bg(:)  = background_conc
+         C1d_bg(:)  = MAX(0.0_fp, background_conc)
          C1d_bg(2:n_slab_max2-1) =C1d_prev(1:n_slab_max)
          C1d_new(:) = C1d_bg(:)
 
          DO t1s = 1, Nt
 
-            C1d_bg(:)  = background_conc
+            C1d_bg(:)  = MAX(0.0_fp, background_conc)
             C1d_bg(2:n_slab_max2-1) =C1d_new(2:n_slab_max2-1)
 
             theta_previous   = box_theta
             box_theta_candidate = ATAN( TAN(theta_previous) + wind_s_shear*Dt2 )
-            box_Ra_candidate = box_Ra  * SQRT(TAN(box_theta_candidate)**2.0+1.0_fp) &
-                              / sqrt(TAN(theta_previous)**2.0+1.0_fp)
+            box_Ra_candidate = box_Ra  * SQRT(TAN(box_theta_candidate)**2+1.0_fp) &
+                              / sqrt(TAN(theta_previous)**2+1.0_fp)
             box_Rb_candidate = Vgrid_1D/(box_Ra_candidate*box_length*1.0e+6_fp)
             ! Apply shear distortion only if Rb remains above threshold
             !IF (box_Rb_candidate >= Rb_min_shear) THEN
@@ -2872,34 +2887,16 @@ CONTAINS
                box_Ra    = box_Ra_candidate
                box_Rb    = box_Rb_candidate
             !ENDIF
-            eddy_B = eddy_v*SIN(abs(box_theta)) + eddy_h*COS(box_theta) ! b
-            CFL_dif_B = eddy_B * Dt2 / box_Rb**2.0
-            ! WRITE(6,*) "Debug (BZ): t1s = ", t1s, "; eddy_B = ", eddy_B, "; Dt2 = ", Dt2, "; box_Rb = ", box_Rb, &
-            !          "; CFL_dif_b = ", CFL_dif_b, "species = ", TRIM(spc_names_p_use(i_species))
-            ! theta_previous   = box_theta(i_species)
-            ! box_theta(i_species) = ATAN( TAN(theta_previous) + wind_s_shear*Dt2 )
-            ! box_Ra(i_species) = box_Ra(i_species)  * (TAN(box_theta(i_species))**2+1)**0.5 &
-            !                   / (TAN(theta_previous)**2+1)**0.5
-            ! box_Rb(i_species) = Vgrid_1D/(box_Ra(i_species)*box_length*1.0e+6_fp)
-
-            ! eddy_B = eddy_v*SIN(abs(box_theta(i_species))) + eddy_h*COS(box_theta(i_species)) ! b
-            ! CFL_dif_B = eddy_B * Dt2 / box_Rb(i_species)**2
-            !IF(CFL_dif_b> 0.5_fp) THEN
-            !   errMsg = 'Debug (BZ): 1-D plume diffusion: Size are too small to meet the CFL condition! '
-            !   WRITE(6,*) "Debug (BZ): t1s = ", t1s, "; eddy_B = ", eddy_B, "; Dt2 = ", Dt2, "; box_Rb = ", box_Rb, &
-            !         "; CFL_dif_b = ", CFL_dif_b, "species = ", TRIM(spc_names_p_use(i_species))
-            !   CALL GC_WARNING( ErrMsg, RC, ThisLoc )
-               !CALL GC_Error( errMsg, RC, thisLoc )
-               !CALL ERROR_STOP( errMsg, thisLoc)
-            !ENDIF
-
-            
+            eddy_D = eddy_v*SIN(box_theta)**2 + eddy_h*COS(box_theta)**2 ! b
+            CFL_dif_D = eddy_D * Dt2 / box_Rb**2
+            ! WRITE(6,*) "Debug (BZ): t1s = ", t1s, "; eddy_D = ", eddy_D, "; Dt2 = ", Dt2, "; box_Rb = ", box_Rb, &
+            !          "; CFL_dif_D = ", CFL_dif_D, "species = ", TRIM(spc_names_p_use(i_species))
 
             C1d_new(2:n_slab_max2-1) = C1d_bg(2:n_slab_max2-1)     &
-               + CFL_dif_B*(   C1d_bg(3:n_slab_max2)   &
-                        -2*C1d_bg(2:n_slab_max2-1) &
+               + CFL_dif_D*(   C1d_bg(3:n_slab_max2)   &
+                        -2.0_fp*C1d_bg(2:n_slab_max2-1) &
                         +  C1d_bg(1:n_slab_max2-2) ) 
-            C1d_new(2:n_slab_max2-1) = MAX(C1d_new(2:n_slab_max2-1), 0.0_fp)
+            !C1d_new(2:n_slab_max2-1) = MAX(C1d_new(2:n_slab_max2-1), 0.0_fp)
          ENDDO
 
          !Vgrid_1D_new    =  box_Ra(i_species) * box_Rb(i_species) *box_length*1.0e+6_fp
@@ -5005,7 +5002,7 @@ CONTAINS
     REAL(fp)                      :: box_length, box_alpha
     REAL(fp)                      :: box_extra, box_life, box_label
    ! REAL(fp)                      :: box_RA(nspc_p), box_Rb(nspc_p), box_theta(nspc_p)
-    REAL(fp)                      :: box_RA, box_Rb, box_theta
+    REAL(fp)                      :: box_Ra, box_Rb, box_theta
     REAL(fp)                      :: Pdx, Pdy
     REAL(fp)                      :: Vgrid_EU, Vgrid_2D, Vgrid_1D
     REAL(fp)                      :: Vgrid_1D_temp
@@ -5014,6 +5011,7 @@ CONTAINS
     REAL(fp)                      :: ConcSlab(n_slab_max)
     REAL(fp)                      :: mass_plume_1D, mass_plume_2D, mass_plume_diff, mass_plume_bg
     REAL(fp)                      :: Xscale, Yscale
+    REAL(fp)                      :: Xslab(128, n_slab_max),  Yslab(128, n_slab_max) ! intermediate product of interpolating from 2-D to 1-D, size 128 is defined in subroutine: Define_Slab_Grid
     REAL(fp)                      :: C99, Core_Threshold
     
     CHARACTER(LEN=255)            :: spc_name
@@ -5029,6 +5027,8 @@ CONTAINS
     ! Diagnostic file variable
     INTEGER                :: i_x, i_y, i_slab
     
+    INTEGER                :: file_2Dmass_NK01_ID, file_1Dmass_NK01_ID
+    CHARACTER(LEN=255)     :: file_2Dmass_NK01,  file_1Dmass_NK01
 
 
 
@@ -5147,6 +5147,13 @@ CONTAINS
          Num_transfer_2D = Num_transfer_2D + 1
          WRITE(File_Plume_life_IU_2D,'(I0,2(1X,F10.1))') & 
             Plume2d_curr%LABEL, Plume2d_curr%LIFE, 0.0_fp
+         file_2Dmass_NK01_ID = findFreeLun()
+         WRITE(file_2Dmass_NK01,  &
+            '("Plume-2D_NK01_mass_ID_",I0,"_time_", I0,".txt")') &
+            Plume2d_curr%LABEL, NINT(time_elapsed)
+         CALL PLUME_CONC_DIAG_FILES_2D(   &
+            file_2Dmass_NK01_ID, file_2Dmass_NK01,   &
+            Plume2d_curr%CONCNT2d(:,:, id_NK01_p)*Vgrid_2D, RC)
          ! Creating 1D list
          Num_Plume1d = Num_Plume1d + 1
          Num_Plume1d_acc = Num_Plume1d_acc +1
@@ -5196,7 +5203,15 @@ CONTAINS
          Xscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO2_p), Pdx, Pdy, frac_mass, 2)
          Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,id_SO2_p), Pdx, Pdy, frac_mass, 1)
          box_theta = ATAN( Xscale/Yscale )
+         
+         CALL Define_Slab_Grid(                              &
+               Pdx, Pdy, box_theta, Yscale,                   &
+               box_Ra, box_Rb, Xslab, Yslab                   &
+         )
          Plume1d_new%THETA = box_theta
+         Plume1d_new%RA = box_Ra
+         Plume1d_new%RB = box_Rb
+         Vgrid_1D = box_Ra*box_Rb*Plume1d_new%LENGTH*1.0e+6_fp
          !Write(6, * ) "Debug (BZ): Xscale= ", Xscale, " Yscale= ", Yscale, "Pdx= ", Pdx, "Pdy= ", Pdy, &
          !                  "Box_length= ",box_length, "Box_theta=", box_theta
          DO i_species = 1, nspc_p
@@ -5206,18 +5221,15 @@ CONTAINS
             ! Yscale = Get_XYscale(Plume2d_curr%CONCNT2d(:,:,i_species), Pdx, Pdy, frac_mass, 1)
             ! box_theta(i_species) = ATAN( Xscale/Yscale )
             
-            CALL Slab_init_bilinear(Pdx, Pdy, box_theta, Plume2d_curr%CONCNT2d(:,:,i_species), &
-                     Yscale, box_Ra, box_Rb, ConcSlab)
-            
-            IF (i_species .eq. id_SO2_p) THEN
-               Plume1d_new%RA = box_Ra
-               Plume1d_new%RB = box_Rb
-               !Write(6, * ) "Debug (BZ): box_Ra= ", box_Ra, " box_Rb= ", box_Rb
-            ENDIF
-            Vgrid_1D_temp = box_Ra*box_Rb*Plume1d_new%LENGTH*1.0e+6_fp
+            ! CALL Slab_init_bilinear(Pdx, Pdy, box_theta, Plume2d_curr%CONCNT2d(:,:,i_species), &
+            !          Yscale, box_Ra, box_Rb, ConcSlab)
+            ConcSlab(:) = 0.0_fp
+            CALL Interpolate_To_Slab(Pdx, Pdy, Plume2d_curr%CONCNT2d(:,:,i_species), &
+                                     box_Ra, box_Rb, Xslab, Yslab, ConcSlab )
+            !Vgrid_1D_temp = box_Ra*box_Rb*Plume1d_new%LENGTH*1.0e+6_fp
 
             mass_plume_2D = Vgrid_2D * SUM(Plume2d_curr%CONCNT2d(:,:,i_species))
-            mass_plume_1D = Vgrid_1D_temp * SUM(ConcSlab)
+            mass_plume_1D = Vgrid_1D * SUM(ConcSlab)
             mass_plume_diff = mass_plume_1D - mass_plume_2D
             IF (i_species .eq. id_SO2_p) THEN
                mass_S_SO2_r4 = mass_S_SO2_r4 + mass_plume_diff
@@ -5241,7 +5253,7 @@ CONTAINS
                         "Species: ", TRIM(spc_names_p_use(i_species)), " mass_plume_2D= ", mass_plume_2D, &
                         'mass_plume_1D= ', mass_plume_1D
             ELSE
-               IF(mass_plume_diff/mass_plume_2D>0.01)THEN
+               IF(abs(mass_plume_diff)/mass_plume_2D>0.01)THEN
                      Write (6, *) "Debug (BZ): More than 1% mass change in plume from 2-D to 1-D at i_box = ", Plume2d_curr%label, &
                            "Species: ", TRIM(spc_names_p_use(i_species)), " mass_plume_2D= ", mass_plume_2D, &
                            'mass_plume_1D= ', mass_plume_1D
@@ -5261,7 +5273,7 @@ CONTAINS
                   ind_spc_GC =  ind_spc_GC_bin1 +ibin - 1
                   background_mass = Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU
                ENDIF
-               Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) = (background_mass + mass_plume_diff) / Vgrid_EU
+               Spc(ind_spc_GC)%Conc(i_lon, i_lat, i_lev) = (background_mass - mass_plume_diff) / Vgrid_EU
             ENDIF
             Plume1d_new%CONCNT1d(:,i_species) = ConcSlab
             ! Project from species Ra, Rb grid to SO2 Ra, Rb grid
@@ -5269,7 +5281,15 @@ CONTAINS
             !   Plume1d_new%CONCNT1d(:,i_species) = ConcSlab*Vgrid_1D_temp/Vgrid_1D
             !ENDIF
          ENDDO
-
+         file_1Dmass_NK01_ID = findFreeLun()
+         WRITE(file_1Dmass_NK01,  &
+               '("Plume-1D_NK01_mass_ID_",I0,"_time_", I0,".txt")') &
+               Plume1d_new%LABEL, NINT(time_elapsed)
+         CALL PLUME_CONC_DIAG_FILES_1D( &
+               file_1Dmass_NK01_ID, file_1Dmass_NK01, &
+               Plume1d_new%CONCNT1d(:,id_NK01_p) * &
+               Plume1d_new%RA*Plume1d_new%RB*Plume1d_new%LENGTH*1.0e+6_fp, &
+               RC)
          
 
          ! If no existing 1D segment, creating the first node
@@ -7569,6 +7589,135 @@ END SUBROUTINE QuickSort_Real
       Cslab(1:n_slab_max) = Cslab_tmp(1:n_slab_max)
 
   END SUBROUTINE Slab_init_bilinear
+
+  ! Definea 1-D grid based on one specific species distribution, 
+  ! and interpolate all species to the same grid
+  SUBROUTINE Define_Slab_Grid(                                  &
+               Pdx, Pdy, theta1, SO2_Yscale,                    &
+               box_Ra, box_Rb, X2d, Y2d                         &
+             )
+
+    IMPLICIT NONE
+
+    INTEGER, PARAMETER :: Na = 128
+
+    REAL(fp), INTENT(IN)  :: Pdx
+    REAL(fp), INTENT(IN)  :: Pdy
+    REAL(fp), INTENT(IN)  :: theta1
+    REAL(fp), INTENT(IN)  :: SO2_Yscale
+
+    REAL(fp), INTENT(OUT) :: box_Ra
+    REAL(fp), INTENT(OUT) :: box_Rb
+
+    REAL(fp), INTENT(OUT) :: X2d(Na,n_slab_max)
+    REAL(fp), INTENT(OUT) :: Y2d(Na,n_slab_max)
+
+    INTEGER :: i, j
+    INTEGER :: Na_mid, Nb_mid
+
+    REAL(fp) :: LenA, LenB
+    REAL(fp) :: Adx, Ady
+    REAL(fp) :: Bdx, Bdy
+
+    Na_mid = Na / 2
+    Nb_mid = n_slab_max / 2
+
+    ! Define the physical geometry using SO2 only.
+    !
+    ! Retain your original geometry relation here if that is
+    ! the intended model definition.
+    box_Ra = SO2_Yscale * TAN(theta1)
+
+    ! Resolution of each slab in the cross-plume d direction
+    box_Rb = Pdy
+
+    ! Sampling interval along the uniform b direction
+    LenA = box_Ra / REAL(Na,fp)
+
+    ! Slab resolution along the resolved d direction
+    LenB = box_Rb
+
+    ! Direction b:
+    ! theta = 90 degrees minus the angle between b and s.
+    Adx = LenA * SIN(theta1)
+    Ady = LenA * COS(theta1)
+
+    ! Direction d, perpendicular to b
+    Bdx = LenB * COS(theta1)
+    Bdy = LenB * SIN(theta1)
+
+    ! Construct the center slab.
+    DO i = 1, Na
+        X2d(i,Nb_mid) =                              &
+            -LenA*REAL(Na_mid,fp)*SIN(theta1)         &
+            + LenA*(REAL(i,fp)-0.5_fp)*SIN(theta1)
+
+        Y2d(i,Nb_mid) =                              &
+            -LenA*REAL(Na_mid,fp)*COS(theta1)         &
+            + LenA*(REAL(i,fp)-0.5_fp)*COS(theta1)
+    END DO
+
+    ! Offset by half a slab so that the coordinates represent
+    ! slab centers consistently.
+    X2d(:,Nb_mid) = X2d(:,Nb_mid) + 0.5_fp*Bdx
+    Y2d(:,Nb_mid) = Y2d(:,Nb_mid) - 0.5_fp*Bdy
+
+    DO j = Nb_mid + 1, n_slab_max
+        X2d(:,j) = X2d(:,j-1) - Bdx
+        Y2d(:,j) = Y2d(:,j-1) + Bdy
+    END DO
+
+    DO j = Nb_mid - 1, 1, -1
+        X2d(:,j) = X2d(:,j+1) + Bdx
+        Y2d(:,j) = Y2d(:,j+1) - Bdy
+    END DO
+
+  END SUBROUTINE Define_Slab_Grid
+  
+  SUBROUTINE Interpolate_To_Slab(                               &
+               Pdx, Pdy, Pc_2D, box_Ra, box_Rb,                 &
+               X2d, Y2d, Cslab                                  &
+             )
+
+    IMPLICIT NONE
+
+    INTEGER, PARAMETER :: Na = 128
+
+    REAL(fp), INTENT(IN)  :: Pdx
+    REAL(fp), INTENT(IN)  :: Pdy
+    REAL(fp), INTENT(IN)  :: Pc_2D(n_x_max,n_y_max)
+
+    REAL(fp), INTENT(IN)  :: box_Ra
+    REAL(fp), INTENT(IN)  :: box_Rb
+
+    REAL(fp), INTENT(IN)  :: X2d(Na,n_slab_max)
+    REAL(fp), INTENT(IN)  :: Y2d(Na,n_slab_max)
+
+    REAL(fp), INTENT(OUT) :: Cslab(n_slab_max)
+
+    REAL(fp) :: C2d(Na,n_slab_max)
+
+    INTEGER :: i, j
+
+    !$OMP PARALLEL DO COLLAPSE(2)                     &
+    !$OMP DEFAULT(SHARED) PRIVATE(i,j)
+    DO j = 1, n_slab_max
+        DO i = 1, Na
+            C2d(i,j) = Interplt_2D(                    &
+                Pdx, Pdy, X2d(i,j), Y2d(i,j), Pc_2D, 2 &
+            )
+        END DO
+    END DO
+    !$OMP END PARALLEL DO
+
+    ! Concentration is assumed uniform along b.
+    ! Therefore average the sampled concentrations along b.
+    DO j = 1, n_slab_max
+        Cslab(j) = SUM(C2d(:,j)) / REAL(Na,fp)
+    END DO
+
+  END SUBROUTINE Interpolate_To_Slab
+
 
   REAL(fp) FUNCTION Interplt_2D(Pdx, Pdy, x0, y0, C_2D, ids)
     ! n_x_max, n_y_max, Pdx, Pdy are global variables
