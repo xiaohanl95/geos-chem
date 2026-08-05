@@ -149,8 +149,8 @@ CONTAINS
 #endif
    ! BZ: save reaction rate for Plume chemistry
    USE Lagrange_Singlebox_Mod,     ONLY  : RXNRATE_CONST_KPP
-   USE Lagrange_Singlebox_Mod,     ONLY  : SpcConc_BEFORE_KPP
-   USE Lagrange_Singlebox_Mod,     ONLY  : SpcConc_AFTER_KPP
+   ! USE Lagrange_Singlebox_Mod,     ONLY  : SpcConc_BEFORE_KPP
+   ! USE Lagrange_Singlebox_Mod,     ONLY  : SpcConc_AFTER_KPP
 !
 ! !INPUT PARAMETERS:
 !
@@ -1053,7 +1053,7 @@ CONTAINS
        ! Store concentrations before the call to "Integrate".  This will
        ! let us reset concentrations before calling "Integrate" a 2nd time.
        C_before_integrate = C
-       SpcConc_BEFORE_KPP(I, J, L, :) = C
+       !SpcConc_BEFORE_KPP(I, J, L, :) = C
        ! Do the same for the KPP initial timestep
        ! Save local rate constants too
        KPPH_before_integrate = State_Chm%KPPHvalue(I,J,L)
@@ -1375,7 +1375,7 @@ CONTAINS
 
           ! Set negative concentrations to zero
           C(N) = MAX( C(N), 0.0_dp )
-          SpcConc_AFTER_KPP(I, J, L, N) = C(N)
+          !SpcConc_AFTER_KPP(I, J, L, N) = C(N)
           ! Copy concentrations back into State_Chm%Species
           State_Chm%Species(SpcID)%Conc(I,J,L) = REAL( C(N), kind=fp )
 

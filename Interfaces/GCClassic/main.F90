@@ -212,7 +212,7 @@ PROGRAM GEOS_Chem
   INTEGER                  :: ELAPSED_TODAY, HOUR,        MINUTE,  SECOND
   INTEGER                  :: id_H2O,        id_CH4,      id_CLOCK
   INTEGER                  :: previous_units, previous_units_temp
-  INTEGER                  :: id_SO2,  id_SO4  ! debug, used to check unit, BZ
+  INTEGER                  :: id_SO2,  id_SO4, id_OH  ! debug, used to check unit, BZ
 
   ! Reals
   REAL(f8)                 :: TAU,           TAUb
@@ -1640,8 +1640,13 @@ PROGRAM GEOS_Chem
              !WRITE(6,'(a)') 'Debug: (BZ): Main: Before Do_Chemistry: Unit for SO4 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
              !Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : rate constant for RXN 202 = ", &
              !           State_Diag%RxnConst(23, 40, 39 ,202)
+             id_OH = Ind_("OH")
+             Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : OH conc in box (68, 27, 39)= ", &
+                        State_Chm%Species(id_OH)%Conc(68, 27, 39)
              CALL Do_Chemistry( Input_Opt,  State_Chm, State_Diag, &
                                 State_Grid, State_Met, RC )
+             Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : OH conc in box (68, 27, 39)= ", &
+                        State_Chm%Species(id_OH)%Conc(68, 27, 39)
              !WRITE(6,'(a)') 'Debug: (BZ): After do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
              !Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : rate constant for RXN 202 = ", &
              !            State_Diag%RxnConst(23, 40, 39 ,202)
@@ -1668,8 +1673,16 @@ PROGRAM GEOS_Chem
           ! Unit conversion from kg/kg dry to molec/cm3 is moved inside the lagrange_mod
           ! Run physics, chemistry inside the plume, dissolve plume and release species if condition met
           !==============================================================================================
-          IF ( ITS_TIME_FOR_DYN() ) THEN 
+          IF ( ITS_TIME_FOR_DYN() ) THEN
+            IF ( ITS_TIME_FOR_CHEM() ) THEN 
+               Write (6, *) "Debug: (BZ): Main: Before Plume model : OH conc in box (68, 27, 39)= ", &
+                           State_Chm%Species(id_OH)%Conc(68, 27, 39) 
+            ENDIF
             CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+            IF ( ITS_TIME_FOR_CHEM() ) THEN 
+               Write (6, *) "Debug: (BZ): Main: After Plume model : OH conc in box (68, 27, 39)= ", &
+                           State_Chm%Species(id_OH)%Conc(68, 27, 39) 
+            ENDIF
             ! Trap potential errors
             IF ( RC /= GC_SUCCESS ) THEN
                ErrMsg = 'Error encountered in "plume_model_box"!'
