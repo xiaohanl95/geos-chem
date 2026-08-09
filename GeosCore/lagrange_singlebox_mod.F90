@@ -94,7 +94,8 @@ MODULE Lagrange_singlebox_Mod
   INTEGER                               :: id_SO2,  id_SO4,  id_NH3,   id_NH4,  id_PASVLA
   INTEGER                               :: id_OH,   id_O3,   id_H2O,   id_HO2,  id_PH2SO4
   INTEGER                               :: id_NK01, id_SF01, id_AW01,  id_H2SO4
-  
+  INTEGER                               :: id_SO2pl, id_SO4pl
+
   ! Species ID flags correspond to Plume species
   INTEGER, PARAMETER                    :: nspc_p_bulk           = 6 ! Num of species in Plume, bulk
   INTEGER, PARAMETER                    :: nspc_p_tomas_tracer   = 3 ! Num of tomas tracer type in Plume, currently consider NK, SF, AW
@@ -1320,7 +1321,8 @@ CONTAINS
     id_NK01    =    Ind_('NK01')
     id_SF01    =    Ind_('SF01')
     id_AW01    =    Ind_('AW01')
-    
+    id_SO2pl   =    Ind_('SO2pl') 
+    id_SO4pl   =    Ind_('SO4pl')
     !this_tau  = GET_TAU()
     !this_taub = GET_TAUb()
     !this_year = GET_YEAR()
@@ -3321,11 +3323,11 @@ CONTAINS
     ! For debug process, print rate constant 202: SO2 + OH {+M} = SO4 + HO2 + PH2SO4 :
     !Write (6, *) "Debug: (BZ): In Plume  (Before Plume Chem): rate constant for RXN SO2_OH_RXN_ID = ", &
     !  RXNRATE_CONST_KPP(23, 40, 39 ,SO2_OH_RXN_ID)
-    write(6,*) 'debug (BZ): Before Plume Chem, species ID --- '
-    write(6,*) 'id_OH = ', id_OH, 'id_OH_p = ', id_OH_p, &
-      'id_HO2 = ', id_HO2, 'id_HO2_p = ', id_HO2_p, &
-      'id_SO2 = ', id_SO2, 'id_SO2_p = ', id_SO2_p, &
-      'id_SO4 = ', id_SO4, 'id_SO4_p = ', id_SO4_p
+   !  write(6,*) 'debug (BZ): Before Plume Chem, species ID --- '
+   !  write(6,*) 'id_OH = ', id_OH, 'id_OH_p = ', id_OH_p, &
+   !    'id_HO2 = ', id_HO2, 'id_HO2_p = ', id_HO2_p, &
+   !    'id_SO2 = ', id_SO2, 'id_SO2_p = ', id_SO2_p, &
+   !    'id_SO4 = ', id_SO4, 'id_SO4_p = ', id_SO4_p
 
     IF(.NOT.ASSOCIATED(Plume2d_head)) GOTO 401
     Plume2d_curr => Plume2d_head
@@ -5118,9 +5120,9 @@ CONTAINS
     !    State_Diag%RxnConst(23, 40, 39 ,SO2_OH_RXN_ID)
 400 CONTINUE
     ! Exchange OH and HO2 with background when 1) in chemical grid 2) if turn on tropp sink, only do exchange in stratosphere
-   Write (6, *) "Debug: (BZ): Plume chem before exchange: SUM(Spc(id_OH)%Conc) =  ", SUM(Spc(id_OH)%Conc), &
-               "SUM(Spc(id_HO2)%Conc) = ", SUM(Spc(id_HO2)%Conc), &
-               "SUM(Spc(id_NH3)%Conc) = ", SUM(Spc(id_NH3)%Conc), "SUM(Spc(id_NH4)%Conc) = ", SUM(Spc(id_NH4)%Conc)
+   ! Write (6, *) "Debug: (BZ): Plume chem before exchange: SUM(Spc(id_OH)%Conc) =  ", SUM(Spc(id_OH)%Conc), &
+   !             "SUM(Spc(id_HO2)%Conc) = ", SUM(Spc(id_HO2)%Conc), &
+   !             "SUM(Spc(id_NH3)%Conc) = ", SUM(Spc(id_NH3)%Conc), "SUM(Spc(id_NH4)%Conc) = ", SUM(Spc(id_NH4)%Conc)
     !    State_Diag%RxnConst(23, 40, 39 ,SO2_OH_RXN_ID)
     DO i_lev = 1, NZ_GC
       DO i_lat = 1, NY_GC
@@ -5146,9 +5148,9 @@ CONTAINS
 
 
 
-   Write (6, *) "Debug: (BZ): Plume chem after exchange: SUM(Spc(id_OH)%Conc) =  ", SUM(Spc(id_OH)%Conc), &
-               "SUM(Spc(id_HO2)%Conc) = ", SUM(Spc(id_HO2)%Conc), &
-               "SUM(Spc(id_NH3)%Conc) = ", SUM(Spc(id_NH3)%Conc), "SUM(Spc(id_NH4)%Conc) = ", SUM(Spc(id_NH4)%Conc)
+   ! Write (6, *) "Debug: (BZ): Plume chem after exchange: SUM(Spc(id_OH)%Conc) =  ", SUM(Spc(id_OH)%Conc), &
+   !             "SUM(Spc(id_HO2)%Conc) = ", SUM(Spc(id_HO2)%Conc), &
+   !             "SUM(Spc(id_NH3)%Conc) = ", SUM(Spc(id_NH3)%Conc), "SUM(Spc(id_NH4)%Conc) = ", SUM(Spc(id_NH4)%Conc)
 
     ! deallocate unused space
     IF(allocated(box_concnt_2D)) deallocate(box_concnt_2D)
@@ -5252,7 +5254,9 @@ CONTAINS
     ThisLoc                =   ' -> at plume_structure_change (in module GeosCore/lagrange_singlebox_mod.F90)'
     RC                     =   GC_SUCCESS
     ErrMsg                 =   ''
-
+    
+    Spc(id_SO2pl)%Conc(:,:,:)    =   0.0_fp
+    Spc(id_SO4pl)%Conc(:,:,:)    =   0.0_fp
    !  mass_S_SO2_r3_2D       =   0.0_fp
    !  mass_S_SO4_r3_2D       =   0.0_fp
    !  mass_S_SO2_r3_1D       =   0.0_fp
@@ -5589,6 +5593,12 @@ CONTAINS
                                    MASK = Plume2d_curr%CONCNT2d(:,:,id_SO2_p) >= Core_Threshold         &
                                    ) *Vgrid_2D
          Vgrid_2D_tot_4  = Vgrid_2D_tot_4 + Vgrid_2D*N_Core
+         Spc(id_SO2pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SO2pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))*Vgrid_2D     )  /   Vgrid_EU
+         Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))*Vgrid_2D     )  /   Vgrid_EU
 #ifdef TOMAS
          DO ibin = 1, nbins
             mass_SF_bin_2D(ibin) = mass_SF_bin_2D(ibin) + &
@@ -5709,6 +5719,12 @@ CONTAINS
          mass_S_SO2_7_1D = mass_S_SO2_7_1D + SUM(Plume1d_curr%CONCNT1d(:,id_SO2_p))*Vgrid_1D
          mass_S_SO4_7_1D = mass_S_SO4_7_1D + SUM(Plume1d_curr%CONCNT1d(:,id_SO4_p))*Vgrid_1D
          Vgrid_1D_tot_3  = Vgrid_1D_tot_3 + Vgrid_1D*n_slab_max
+         Spc(id_SO2pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SO2pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,id_SO2_p))*Vgrid_1D     )  /   Vgrid_EU
+         Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,id_SO4_p))*Vgrid_1D     )  /   Vgrid_EU
 #ifdef TOMAS
          DO ibin = 1, nbins 
             mass_SF_bin_1D(ibin) = mass_SF_bin_1D(ibin) + &
@@ -5733,7 +5749,8 @@ CONTAINS
       NULLIFY(Plume1d_tail)
    ENDIF
 400 CONTINUE
-    
+
+
     ! Cleanup pointer
     !IF (ALLOCATED(box_concnt_2D)) DEALLOCATE(box_concnt_2D)
    IF(ASSOCIATED(Plume2d_next)) nullify(Plume2d_next)
