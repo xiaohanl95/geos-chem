@@ -82,7 +82,8 @@ MODULE Lagrange_singlebox_Mod
   INTEGER                               :: Num_of_sources
   INTEGER                               :: n_x_max            !number of x grids in 2D, should be (9 x odd)
   INTEGER                               :: n_y_max            !number of y grids in 2D, should be (9 x odd)
-  INTEGER                               :: N_stop_inject      ! How many parcel to be injected, -1 means continuous injection           
+  INTEGER                               :: N_stop_inject      ! How many parcel to be injected, -1 means continuous injection
+  LOGICAL                               :: dissolve_all       ! Dissolve all the plume boxes at the last dynamic time step        
   TYPE(PlumeSource_t), ALLOCATABLE      :: Plume_sources(:)
   REAL(fp)                              :: Dx_init
   REAL(fp)                              :: Dy_init
@@ -381,6 +382,7 @@ CONTAINS
     ThisLoc            =   ' -> at lagrange_init_box (in module GeosCore/lagrange_singlebox_mod.F90)'
     Spc                =>   State_Chm%Species
 
+    dissolve_all       =  .False.
     Num_inject         =    0
     Num_Plume2d        =    0  ! Store the current number of 2D plume, change due to transfer or dissolve
     Num_Plume1d        =    0  ! Store the current number of 1D plume, change due to transfer or dissolve
@@ -1253,6 +1255,7 @@ CONTAINS
     USE TIME_MOD,        ONLY : GET_TS_DYN, GET_TS_CHEM
     USE TIME_MOD,        ONLY : GET_YEAR, GET_MONTH, GET_DAY, GET_HOUR, GET_MINUTE, GET_SECOND
     USE TIME_MOD,        ONLY : ITS_TIME_FOR_CHEM, ITS_TIME_FOR_DYN, ITS_TIME_FOR_EXIT
+    USE TIME_MOD,        ONLY : GET_TAU, GET_TAUe
     USE State_Grid_Mod,  ONLY : GrdState
     !USE State_Diag_Mod,           ONLY : DgnState
     !USE State_Diag_Mod,           ONLY : DgnMap
@@ -1271,8 +1274,10 @@ CONTAINS
     INTEGER                :: this_year, this_month, this_day, this_hour, this_minute, this_second
 
     REAL(fp)               :: Dt_dyn, Dt_chem
-    !REAL(fp)               :: this_tau, this_taub
+    REAL(fp)               :: this_tau, this_taue, tau_diff
     LOGICAL                :: exe_dyn, exe_chem, exe_exit
+    
+
     !CHARACTER(LEN=63)      :: OrigUnit
     CHARACTER(LEN=255)     :: Datestr
     CHARACTER(LEN=255)     :: spc_name
@@ -1291,17 +1296,24 @@ CONTAINS
     WRITE(Datestr,'(I4.4,I2.2,I2.2,I2.2,I2.2,I2.2)') &
                   this_year, this_month, this_day, &
                   this_hour, this_minute, this_second
-    !WRITE(6,*) 'Debug (BZ): Plume model: Current simulation time is : ', this_year, this_month, &
-    !this_day, this_hour, this_minute, this_second
+   !  WRITE(6,*) 'Debug (BZ): Plume model: Current simulation time is : ', this_year, this_month, &
+   !  this_day, this_hour, this_minute, this_second
 
+    this_tau                      =       GET_TAU()
+    this_taue                     =       GET_TAUe()
+    tau_diff                      =       this_taue - this_tau
+
+   !  WRITE(6,*) "Debug (BZ): Plume model: current elapsed time is: tau = ", this_tau, &
+   !          "taue = ", this_taue, "tau_diff = ", tau_diff
+    
     exe_dyn            =   ITS_TIME_FOR_DYN()
     exe_chem           =   ITS_TIME_FOR_CHEM()
     exe_exit           =   ITS_TIME_FOR_EXIT()
-
-    !IF (exe_dyn)  WRITE(6, *)  "Debug (BZ): Plume model: Is time for dynamic"
-    !IF (exe_chem) WRITE(6, *)  "Debug (BZ): Plume model: Is time for chem"
-    !IF (exe_exit) WRITE(6, *)  "Debug (BZ): Plume model: Is time for exit"
-
+    
+   !  IF (exe_dyn)  WRITE(6, *)  "Debug (BZ): Plume model: Is time for dynamic"
+   !  IF (exe_chem) WRITE(6, *)  "Debug (BZ): Plume model: Is time for chem"
+   !  IF (exe_exit) WRITE(6, *)  "Debug (BZ): Plume model: Is time for exit"
+    
     ErrMsg                 =    ''
     Dt_dyn                 =    GET_TS_DYN()
     Dt_chem                 =   GET_TS_CHEM()
@@ -1327,10 +1339,13 @@ CONTAINS
     !this_taub = GET_TAUb()
     !this_year = GET_YEAR()
     !this_month= GET_MONTH()
-
     
-    !WRITE(6,'(a)') 'debug (BZ): TAU = ',  this_tau, 'TAUb = ', this_taub
-    !WRITE(6,'(a)') 'debug (BZ): this_year = ',  this_year, 'this_month = ', this_month
+    
+    ! The last dynasmic time step    
+    IF ((tau_diff .LE. Dt_dyn) .AND. (exe_dyn)) THEN
+      dissolve_all = .True.
+    ENDIF
+    
 
    IF (use_lagrange .AND. plume_inject_on) THEN
       IF (.NOT. ASSOCIATED(Plume2d_head) .AND. &
@@ -1415,7 +1430,7 @@ CONTAINS
             ! New module update chemistry and microphysics
          ENDIF
 
-         CALL plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+         CALL plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC, dissolve_all)
          ! Plume structure evolution:
          ! 2D to 1D
          ! 1D seg splitting
@@ -5180,7 +5195,7 @@ CONTAINS
     IF(ASSOCIATED(Plume1d_prev)) nullify(Plume1d_prev)
   END SUBROUTINE plume_chem_microphysics
 
-  SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+  SUBROUTINE plume_structure_change(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC, dissolve_all)
     ! All the use have been defined in host: Plume_box_model
     USE Input_Opt_Mod,   ONLY : OptInput, PlumeSource_t
     USE State_Chm_Mod,   ONLY : ChmState, Ind_
@@ -5202,7 +5217,7 @@ CONTAINS
     TYPE(GrdState), INTENT(IN)    :: State_Grid  ! Grid State objectgg
     TYPE(OptInput), INTENT(IN)    :: Input_Opt
     INTEGER,        INTENT(OUT)   :: RC         ! Success or failure
-
+    LOGICAL,        INTENT(IN)    :: dissolve_all ! dissolve all the plume boxes
     TYPE(SpcConc), POINTER        :: Spc(:)
 
     INTEGER                       :: i_box, i_lon, i_lat, i_lev, ibin
@@ -5288,9 +5303,9 @@ CONTAINS
     NULLIFY(Plume2d_next, Plume2d_curr, Plume2d_prev)
     NULLIFY(Plume1d_next, Plume1d_curr, Plume1d_prev, Plume1d_new)
     ! Debug for dissolving plume at exit time
-    IF (ITS_TIME_FOR_EXIT()) THEN
-     Write (6, *) "Debug (BZ): time for exit detected in plume model"
-    ENDIF
+   !  IF (ITS_TIME_FOR_EXIT()) THEN
+   !   Write (6, *) "Debug (BZ): time for exit detected in plume model"
+   !  ENDIF
     !ALLOCATE(box_concnt_2D(n_x_max, n_y_max, n_species))
     !---------------------------------------------------------------------
     ! convert 2D seg to 1D seg if:
@@ -5361,7 +5376,7 @@ CONTAINS
       ! If plume2d_curr%IsTransfer is true or If plume2d_curr%IsDissolve is true
       ! Dissolve the 2D seg
       ! --------------------------------------------------------------------
-      IF(Plume2d_curr%IsTransfer) THEN
+      IF((Plume2d_curr%IsTransfer).AND. (.NOT. dissolve_all)) THEN
          Num_transfer_2D = Num_transfer_2D + 1
          WRITE(File_Plume_life_IU_2D,'(I0,2(1X,F10.1))') & 
             Plume2d_curr%LABEL, Plume2d_curr%LIFE, 0.0_fp
@@ -5526,7 +5541,7 @@ CONTAINS
       ENDIF
 
       !IF((box_life .GT. Critical_day*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
-      IF(Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer) THEN
+      IF((Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer).OR.(dissolve_all)) THEN
          Num_Plume2d = Num_Plume2d - 1
         !mass_S_SO2_r2_2D = mass_S_SO2_r2_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
                       !- Plume2d_curr%MassRef2d(id_SO2)
@@ -5672,7 +5687,7 @@ CONTAINS
             Plume1d_curr%LON, Plume1d_curr%LAT, Plume1d_curr%LEV, &
             Plume1d_curr%RA, Plume1d_curr%RB, Plume1d_curr%Length
 
-      IF(Plume1d_curr%IsDissolve) THEN
+      IF((Plume1d_curr%IsDissolve).OR.(dissolve_all)) THEN
          Num_Plume1d = Num_Plume1d -1 
          Num_dissolve_1D = Num_dissolve_1D + 1
          WRITE(File_Plume_life_IU_1D,'(I0,1X,F10.1)') &
