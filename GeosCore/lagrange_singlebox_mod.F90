@@ -92,10 +92,10 @@ MODULE Lagrange_singlebox_Mod
   REAL(fp)                              :: Critical_day_2D         ! Maximum 2-D plume lifetime allowed, day
   REAL(fp)                              :: Critical_day_1D         ! Maximum total plume lifetime allowed, day
   ! Species ID flags correspond to GEOS-Chem species
-  INTEGER                               :: id_SO2,  id_SO4,  id_NH3,   id_NH4,  id_PASVLA
-  INTEGER                               :: id_OH,   id_O3,   id_H2O,   id_HO2,  id_PH2SO4
-  INTEGER                               :: id_NK01, id_SF01, id_AW01,  id_H2SO4
-  INTEGER                               :: id_SO2pl, id_SO4pl
+  INTEGER                               :: id_SO2,    id_SO4,     id_NH3,      id_NH4,     id_PASVLA
+  INTEGER                               :: id_OH,     id_O3,      id_H2O,      id_HO2,     id_PH2SO4
+  INTEGER                               :: id_NK01,   id_SF01,    id_AW01,     id_H2SO4,   id_AW01pl
+  INTEGER                               :: id_SO2pl,   id_SO4pl,  id_H2SO4pl,  id_NK01pl,  id_SF01pl
 
   ! Species ID flags correspond to Plume species
   INTEGER, PARAMETER                    :: nspc_p_bulk           = 6 ! Num of species in Plume, bulk
@@ -1293,9 +1293,9 @@ CONTAINS
     this_hour                     =      GET_HOUR()
     this_minute                   =      GET_MINUTE()
     this_second                   =      GET_SECOND()
-    WRITE(Datestr,'(I4.4,I2.2,I2.2,I2.2,I2.2,I2.2)') &
-                  this_year, this_month, this_day, &
-                  this_hour, this_minute, this_second
+   !  WRITE(Datestr,'(I4.4,I2.2,I2.2,I2.2,I2.2,I2.2)') &
+   !                this_year, this_month, this_day, &
+   !                this_hour, this_minute, this_second
    !  WRITE(6,*) 'Debug (BZ): Plume model: Current simulation time is : ', this_year, this_month, &
    !  this_day, this_hour, this_minute, this_second
 
@@ -1333,8 +1333,12 @@ CONTAINS
     id_NK01    =    Ind_('NK01')
     id_SF01    =    Ind_('SF01')
     id_AW01    =    Ind_('AW01')
-    id_SO2pl   =    Ind_('SO2pl') 
-    id_SO4pl   =    Ind_('SO4pl')
+    id_SO2pl   =    Ind_('SO2PL') 
+    id_SO4pl   =    Ind_('SO4PL')
+    id_NK01pl  =    Ind_('NK01PL') 
+    id_SF01pl  =    Ind_('SF01PL')
+    id_AW01pl  =    Ind_('AW01PL')
+    id_H2SO4pl =    Ind_('H2SO4PL')
     !this_tau  = GET_TAU()
     !this_taub = GET_TAUb()
     !this_year = GET_YEAR()
@@ -1342,7 +1346,7 @@ CONTAINS
     
     
     ! The last dynasmic time step    
-    IF ((tau_diff .LE. Dt_dyn) .AND. (exe_dyn)) THEN
+    IF ((tau_diff .LE. Dt_dyn/3600.0_fp) .AND. (exe_dyn)) THEN
       dissolve_all = .True.
     ENDIF
     
@@ -5272,6 +5276,17 @@ CONTAINS
     
     Spc(id_SO2pl)%Conc(:,:,:)    =   0.0_fp
     Spc(id_SO4pl)%Conc(:,:,:)    =   0.0_fp
+#ifdef TOMAS
+    Spc(id_H2SO4pl)%Conc(:,:,:)  =   0.0_fp
+    DO ibin = 1, nbins
+      Spc(id_NK01pl + ibin - 1)%Conc(:,:,:)  =   0.0_fp
+      Spc(id_SF01pl + ibin - 1)%Conc(:,:,:)  =   0.0_fp
+      Spc(id_AW01pl + ibin - 1)%Conc(:,:,:)  =   0.0_fp
+    ENDDO
+#endif
+    IF(dissolve_all) THEN
+      Write(6, *) "Debug (BZ): dissolve_all = true"
+    ENDIF
    !  mass_S_SO2_r3_2D       =   0.0_fp
    !  mass_S_SO4_r3_2D       =   0.0_fp
    !  mass_S_SO2_r3_1D       =   0.0_fp
@@ -5343,6 +5358,7 @@ CONTAINS
             Plume2d_curr%lon_ind, Plume2d_curr%lat_ind, Plume2d_curr%lev_ind, &
             Plume2d_curr%LON, Plume2d_curr%LAT, Plume2d_curr%LEV, &
             Plume2d_curr%PDX, Plume2d_curr%PDY,  Plume2d_curr%LENGTH
+      IF (dissolve_all) Plume2d_curr%IsDissolve = .True.
       ! Below print 2-D conc matrix in each plume, turn off to avoid massive output files
       !file_2Dconc_SO4_ID = findFreeLun()
       !WRITE(file_2Dconc_SO4,'("Plume-2D_SO4_conc_",I0,".txt")') NINT(time_elapsed)
@@ -5376,7 +5392,7 @@ CONTAINS
       ! If plume2d_curr%IsTransfer is true or If plume2d_curr%IsDissolve is true
       ! Dissolve the 2D seg
       ! --------------------------------------------------------------------
-      IF((Plume2d_curr%IsTransfer).AND. (.NOT. dissolve_all)) THEN
+      IF((Plume2d_curr%IsTransfer).AND. (.NOT. Plume2d_curr%IsDissolve)) THEN
          Num_transfer_2D = Num_transfer_2D + 1
          WRITE(File_Plume_life_IU_2D,'(I0,2(1X,F10.1))') & 
             Plume2d_curr%LABEL, Plume2d_curr%LIFE, 0.0_fp
@@ -5541,7 +5557,7 @@ CONTAINS
       ENDIF
 
       !IF((box_life .GT. Critical_day*24.0*60.0*60).OR. (ITS_TIME_FOR_EXIT())) THEN
-      IF((Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer).OR.(dissolve_all)) THEN
+      IF((Plume2d_curr%IsDissolve .OR. Plume2d_curr%IsTransfer)) THEN
          Num_Plume2d = Num_Plume2d - 1
         !mass_S_SO2_r2_2D = mass_S_SO2_r2_2D + SUM(Plume2d_curr%CONCNT2d(:,:,id_SO2_p))  * Vgrid_2D 
                       !- Plume2d_curr%MassRef2d(id_SO2)
@@ -5615,14 +5631,29 @@ CONTAINS
                (  Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
                   SUM(Plume2d_curr%CONCNT2d(:,:,id_SO4_p))*Vgrid_2D     )  /   Vgrid_EU
 #ifdef TOMAS
+         Spc(id_H2SO4pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_H2SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,id_H2SO4_p))*Vgrid_2D     )  /   Vgrid_EU
          DO ibin = 1, nbins
+            i_tracer = id_NK01_p+(ibin-1)*nspc_p_tomas_tracer 
+
             mass_SF_bin_2D(ibin) = mass_SF_bin_2D(ibin) + &
-                  SUM(Plume2d_curr%CONCNT2d(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
+                  SUM(Plume2d_curr%CONCNT2d(:,:, i_tracer + 1)) * Vgrid_2D
             mass_NK_bin_2D(ibin) = mass_NK_bin_2D(ibin) + &
-                  SUM(Plume2d_curr%CONCNT2d(:,:, 10+1+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D
+                  SUM(Plume2d_curr%CONCNT2d(:,:, i_tracer)) * Vgrid_2D
             mass_MK_bin_2D(ibin) = mass_MK_bin_2D(ibin) + &
-                  SUM(Plume2d_curr%CONCNT2d(:,:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D * 1.375_fp + &
-                  SUM(Plume2d_curr%CONCNT2d(:,:, 10+3+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_2D 
+                  SUM(Plume2d_curr%CONCNT2d(:,:, i_tracer + 1)) * Vgrid_2D * 1.375_fp + &
+                  SUM(Plume2d_curr%CONCNT2d(:,:, i_tracer + 2)) * Vgrid_2D
+
+            Spc(id_NK01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_NK01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,i_tracer))*Vgrid_2D     )  /   Vgrid_EU
+            Spc(id_SF01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SF01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,i_tracer + 1))*Vgrid_2D     )  /   Vgrid_EU
+            Spc(id_AW01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_AW01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume2d_curr%CONCNT2d(:,:,i_tracer + 2))*Vgrid_2D     )  /   Vgrid_EU
          ENDDO
 #endif
          Plume2d_prev => Plume2d_curr
@@ -5681,13 +5712,15 @@ CONTAINS
 
       Plume1d_next => Plume1d_curr%next
 
+      IF (dissolve_all) Plume1d_curr%IsDissolve = .True.
+
       WRITE(File_Plume_location_IU_1D,'(5(I0,1X),3(F10.3, 1X))') &
             NINT(time_elapsed), Plume1d_curr%LABEL, &
             Plume1d_curr%lon_ind, Plume1d_curr%lat_ind, Plume1d_curr%lev_ind, &
             Plume1d_curr%LON, Plume1d_curr%LAT, Plume1d_curr%LEV, &
             Plume1d_curr%RA, Plume1d_curr%RB, Plume1d_curr%Length
 
-      IF((Plume1d_curr%IsDissolve).OR.(dissolve_all)) THEN
+      IF((Plume1d_curr%IsDissolve)) THEN
          Num_Plume1d = Num_Plume1d -1 
          Num_dissolve_1D = Num_dissolve_1D + 1
          WRITE(File_Plume_life_IU_1D,'(I0,1X,F10.1)') &
@@ -5741,14 +5774,30 @@ CONTAINS
                (  Spc(id_SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
                   SUM(Plume1d_curr%CONCNT1d(:,id_SO4_p))*Vgrid_1D     )  /   Vgrid_EU
 #ifdef TOMAS
-         DO ibin = 1, nbins 
+         Spc(id_H2SO4pl)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_H2SO4pl)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,id_H2SO4_p))*Vgrid_1D     )  /   Vgrid_EU
+         DO ibin = 1, nbins
+
+            i_tracer = id_NK01_p+(ibin-1)*nspc_p_tomas_tracer 
+
             mass_SF_bin_1D(ibin) = mass_SF_bin_1D(ibin) + &
-                  SUM(Plume1d_curr%CONCNT1d(:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D
+                  SUM(Plume1d_curr%CONCNT1d(:, i_tracer + 1)) * Vgrid_1D
             mass_NK_bin_1D(ibin) = mass_NK_bin_1D(ibin) + &
-                  SUM(Plume1d_curr%CONCNT1d(:, 10+1+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D
+                  SUM(Plume1d_curr%CONCNT1d(:, i_tracer)) * Vgrid_1D
             mass_MK_bin_1D(ibin) = mass_MK_bin_1D(ibin) + &
-                  SUM(Plume1d_curr%CONCNT1d(:, 10+2+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D * 1.375_fp + &
-                  SUM(Plume1d_curr%CONCNT1d(:, 10+3+(ibin-1)*nspc_p_tomas_tracer)) * Vgrid_1D 
+                  SUM(Plume1d_curr%CONCNT1d(:, i_tracer + 1)) * Vgrid_1D * 1.375_fp + &
+                  SUM(Plume1d_curr%CONCNT1d(:, i_tracer + 2)) * Vgrid_1D
+                  
+            Spc(id_NK01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_NK01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,i_tracer))*Vgrid_1D     )  /   Vgrid_EU
+            Spc(id_SF01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_SF01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,i_tracer + 1))*Vgrid_1D     )  /   Vgrid_EU
+            Spc(id_AW01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) =   &
+               (  Spc(id_AW01pl + ibin - 1)%Conc(i_lon, i_lat, i_lev) * Vgrid_EU     +     &
+                  SUM(Plume1d_curr%CONCNT1d(:,i_tracer + 2))*Vgrid_1D     )  /   Vgrid_EU
          ENDDO
          ! WRITE (6, *) "Debug (BZ), 1-D-1, Nk is: "
          ! WRITE(*,'(15(1X,ES12.4))') (mass_NK_bin_1D(ibin), ibin=1,15)
