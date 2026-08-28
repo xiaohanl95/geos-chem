@@ -983,6 +983,8 @@ CONTAINS
        CALL Update_RCONST()
        ! BZ, store RCONSTANT FOR the use in Plume Chem
        RXNRATE_CONST_KPP (I, J, L, :) = RCONST
+       ! BZ, turn off SO4 photolysis, rxn 987
+       ! RCONST(987)=0.0_fp
        !=====================================================================
        ! HISTORY (aka netCDF diagnostics)
        !
