@@ -142,7 +142,11 @@ CONTAINS
     ! Strings
     INTEGER            :: previous_units
     CHARACTER(LEN=255) :: ErrMsg,  ThisLoc
-
+    
+    ! debug output: BZ
+    INTEGER            :: id_SO2_debug, id_SO4_debug, id_OH_debug
+    REAL(fp)           :: mass_SO2_debug, mass_SO4_debug, mass_OH_debug
+    REAL(fp)           :: vol_debug
     !=======================================================================
     ! DO_CHEMISTRY begins here!
     !=======================================================================
@@ -158,7 +162,10 @@ CONTAINS
        id_NK01 = Ind_('NK01')
        id_CO2  = Ind_('CO2' )
     ENDIF
-
+    ! Debug, BZ
+    id_SO2_debug = Ind_('SO2')
+    id_SO4_debug = Ind_('SO4')
+    id_OH_debug  = Ind_('OH')
     !========================================================================
     ! Chemistry budget diagnostics - Part 1 of 2
     !========================================================================
@@ -211,7 +218,7 @@ CONTAINS
     IF ( Input_Opt%useTimers ) THEN
        CALL Timer_End( "All chemistry", RC )
     ENDIF
-
+   !  WRITE(6,'(a)') 'Debug (BZ): Chem: before unit conversion: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2_debug)%Units)) 
     ! Convert units from mol/mol dry to kg
     CALL Convert_Spc_Units(                                                  &
          Input_Opt      = Input_Opt,                                         &
@@ -221,7 +228,7 @@ CONTAINS
          new_units      = KG_SPECIES,                                        &
          previous_units = previous_units,                                    &
          RC             = RC                                                )
-
+    ! WRITE(6,'(a)') 'Debug (BZ): Chem: During chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2_debug)%Units)) 
     ! Trap potential errors
     IF ( RC /= GC_SUCCESS ) THEN
        ErrMsg = 'Unit conversion error (kg/kg dry -> kg)'
@@ -238,6 +245,15 @@ CONTAINS
     ! If Input_Opt%LCHEM=T then call the chemistry subroutines
     !========================================================================
     IF ( Input_Opt%LCHEM ) THEN
+      ! ! debug output, BZ
+      !  vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+      !  mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) 
+      !  mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) 
+      !  mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) 
+      !  WRITE(6,*) 'Debug: BZ: before do chemistry (69, 20, 39): mass of SO2 = ', &
+      !          mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+      !          'mass of OH = ', mass_OH_debug, ' air volume (cm3)= ', &
+      !          vol_debug
 
        !=====================================================================
        ! Full-chemistry simulations:
@@ -1069,7 +1085,16 @@ CONTAINS
        ENDIF
 
     ENDIF
-
+   ! !  ! debug, BZ
+   !  WRITE(6,'(a)') 'Debug (BZ): Chem: After chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2_debug)%Units)) 
+   !  vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+   !  mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) 
+   !  mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) 
+   !  mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) 
+   !  WRITE(6,*) 'Debug: BZ: after do chemistry: mass of SO2 = ', &
+   !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+   !       'mass of OH = ', mass_OH_debug, ' air volume (cm3) = ', &
+   !       vol_debug
     !========================================================================
     ! Convert species units back to original unit (ewl, 8/12/15)
     !========================================================================
@@ -1087,7 +1112,7 @@ CONTAINS
          State_Met  = State_Met,                                             &
          new_units  = previous_units,                                        &
          RC         = RC                                                    )
-
+    ! WRITE(6,'(a)') 'Debug (BZ): Chem: After chemistry and unit conversion : Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2_debug)%Units)) 
     ! Trap potential errors
     IF ( RC /= GC_SUCCESS ) THEN
        ErrMsg = 'Unit conversion error'

@@ -291,7 +291,7 @@ PROGRAM GEOS_Chem
 
   ! Display model information
   CALL Display_Model_Info()
-  id_SO2 = 1
+  id_SO2 = 254
   id_SO4 = 20  
   !==========================================================================
   !                ***** I N I T I A L I Z A T I O N *****
@@ -1624,8 +1624,10 @@ PROGRAM GEOS_Chem
           ! after all Eulerian processes (transport, mixing, etc.) before chemistry.
           !==============================================================================================
           !CALL plume_inject(am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-          IF ( ITS_TIME_FOR_DYN() ) THEN 
+          IF ( ITS_TIME_FOR_DYN() ) THEN
+            ! WRITE(6,'(a)') 'Debug (BZ): Main: before injection: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
             CALL plume_inject_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
+            ! WRITE(6,'(a)') 'Debug (BZ): Main: After injection: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
             ! Trap potential errors
             IF ( RC /= GC_SUCCESS ) THEN
                ErrMsg = 'Error encountered in "plume_inject_box"!'
@@ -1643,8 +1645,10 @@ PROGRAM GEOS_Chem
              id_OH = Ind_("OH")
             !  Write (6, *) "Debug: (BZ): Main: Before Do_Chemistry : OH conc in box (68, 27, 39)= ", &
             !             State_Chm%Species(id_OH)%Conc(68, 27, 39)
+            !  WRITE(6,'(a)') 'Debug (BZ): Main: before Chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
              CALL Do_Chemistry( Input_Opt,  State_Chm, State_Diag, &
                                 State_Grid, State_Met, RC )
+            ! WRITE(6,'(a)') 'Debug (BZ): Main: after Chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
             !  Write (6, *) "Debug: (BZ): Main: After Do_Chemistry : OH conc in box (68, 27, 39)= ", &
             !             State_Chm%Species(id_OH)%Conc(68, 27, 39)
              !WRITE(6,'(a)') 'Debug: (BZ): After do chemistry: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
@@ -1674,15 +1678,17 @@ PROGRAM GEOS_Chem
           ! Run physics, chemistry inside the plume, dissolve plume and release species if condition met
           !==============================================================================================
           IF ( ITS_TIME_FOR_DYN() ) THEN
-            IF ( ITS_TIME_FOR_CHEM() ) THEN 
-               Write (6, *) "Debug: (BZ): Main: Before Plume model : OH conc in box (68, 27, 39)= ", &
-                           State_Chm%Species(id_OH)%Conc(68, 27, 39) 
-            ENDIF
+            ! IF ( ITS_TIME_FOR_CHEM() ) THEN 
+            !    Write (6, *) "Debug: (BZ): Main: Before Plume model : OH conc in box (68, 27, 39)= ", &
+            !                State_Chm%Species(id_OH)%Conc(68, 27, 39) 
+            ! ENDIF
+            ! WRITE(6,'(a)') 'Debug (BZ): Main: before Plume box model: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
             CALL plume_model_box (am_I_Root, State_Chm, State_Grid, State_Met, Input_Opt, RC)
-            IF ( ITS_TIME_FOR_CHEM() ) THEN 
-               Write (6, *) "Debug: (BZ): Main: After Plume model : OH conc in box (68, 27, 39)= ", &
-                           State_Chm%Species(id_OH)%Conc(68, 27, 39) 
-            ENDIF
+            ! WRITE(6,'(a)') 'Debug (BZ): Main: after Plume box model: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
+            ! IF ( ITS_TIME_FOR_CHEM() ) THEN 
+            !    Write (6, *) "Debug: (BZ): Main: After Plume model : OH conc in box (68, 27, 39)= ", &
+            !                State_Chm%Species(id_OH)%Conc(68, 27, 39) 
+            ! ENDIF
             ! Trap potential errors
             IF ( RC /= GC_SUCCESS ) THEN
                ErrMsg = 'Error encountered in "plume_model_box"!'
