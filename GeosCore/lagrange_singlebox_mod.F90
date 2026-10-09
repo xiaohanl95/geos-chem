@@ -1084,7 +1084,7 @@ CONTAINS
       !CALL ERROR_STOP (ErrMsg, ThisLoc)
       RETURN
     ENDIF
-    WRITE(6,'(a)') 'Debug (BZ): Plume injection: before unit conversion: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
+    ! WRITE(6,'(a)') 'Debug (BZ): Plume injection: before unit conversion: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
     ! In theory, before plume injection, the unit should be kg/kg
     CALL Convert_Spc_Units(                                            &
             Input_Opt      = Input_Opt,                                   &
@@ -1096,7 +1096,7 @@ CONTAINS
             RC             = RC                                          )
     !WRITE(6,'(a)') 'debug : Before plume injection, the unit is ' // TRIM(UNIT_STR(previous_units_temp))
     !WRITE(6,'(a)') 'debug : During plume injection, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO4)%Units))
-    WRITE(6,'(a)') 'Debug (BZ): Plume injection: during plume injection: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
+    ! WRITE(6,'(a)') 'Debug (BZ): Plume injection: during plume injection: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
     ! Check that species units are in  molec/cm3
     IF ( Spc(id_SO4)%Units /= MOLECULES_SPECIES_PER_CM3 ) THEN
       ErrMsg = 'Incorrect species units: ' // TRIM(UNIT_STR(Spc(id_SO4)%Units))
@@ -1113,15 +1113,15 @@ CONTAINS
         Num_Stop = MIN(Num_inject + N_parcel, N_stop_inject)
       END IF
         IF (.NOT. use_lagrange) THEN
-            ! debug, BZ
-            vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
-            mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
-            mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
-            mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
-            WRITE(6,*) 'Debug: BZ: before injection: mass of SO2 = ', &
-                  mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
-                  'mass of OH = ', mass_OH_debug, ' air volume = ', &
-                  vol_debug
+            ! ! debug, BZ
+            ! vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+            ! mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
+            ! WRITE(6,*) 'Debug: BZ: before injection: mass of SO2 = ', &
+            !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+            !       'mass of OH = ', mass_OH_debug, ' air volume = ', &
+            !       vol_debug
             DO i_box = Num_inject+1, Num_Stop, 1
                 
               !IF (i_box .GT. N_stop_inject) EXIT 
@@ -1156,25 +1156,25 @@ CONTAINS
             ENDDO
             Num_inject = Num_Stop
             ! debug, BZ
-            vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
-            mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
-            mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
-            mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
-            WRITE(6,*) 'Debug: BZ: After injection: mass of SO2 = ', &
-                  mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
-                  'mass of OH = ', mass_OH_debug, ' air volume = ', &
-                  vol_debug 
+            ! vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+            ! mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
+            ! WRITE(6,*) 'Debug: BZ: After injection: mass of SO2 = ', &
+            !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+            !       'mass of OH = ', mass_OH_debug, ' air volume = ', &
+            !       vol_debug 
 
         ELSE
             ! debug, BZ
-            vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
-            mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
-            mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
-            mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
-            WRITE(6,*) 'Debug: BZ: before injection: mass of SO2 = ', &
-                  mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
-                  'mass of OH = ', mass_OH_debug, ' air volume = ', &
-                  vol_debug
+            ! vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+            ! mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
+            ! WRITE(6,*) 'Debug: BZ: before injection: mass of SO2 = ', &
+            !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+            !       'mass of OH = ', mass_OH_debug, ' air volume = ', &
+            !       vol_debug
             DO i_box = Num_inject+1, Num_Stop, 1
                 
                 ALLOCATE(Plume2d_new)
@@ -1317,14 +1317,14 @@ CONTAINS
             ENDDO
             Num_inject = Num_Stop
             ! debug, BZ
-            vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
-            mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
-            mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
-            mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
-            WRITE(6,*) 'Debug: BZ: After injection with plume, backgrounnd: mass of SO2 = ', &
-                  mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
-                  'mass of OH = ', mass_OH_debug, ' air volume = ', &
-                  vol_debug 
+            ! vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+            ! mass_SO2_debug = State_Chm%Species(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_SO4_debug = State_Chm%Species(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
+            ! mass_OH_debug = State_Chm%Species(id_OH_debug)%Conc(69, 20, 39) * vol_debug
+            ! WRITE(6,*) 'Debug: BZ: After injection with plume, backgrounnd: mass of SO2 = ', &
+            !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+            !       'mass of OH = ', mass_OH_debug, ' air volume = ', &
+            !       vol_debug 
         ENDIF
     ENDIF
 
@@ -1335,7 +1335,7 @@ CONTAINS
                State_Met      = State_Met,                                   &
                new_units      = previous_units_temp,                   &
                RC             = RC                                          )
-    WRITE(6,'(a)') 'debug: after plume injection and unit conversion, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
+    ! WRITE(6,'(a)') 'debug: after plume injection and unit conversion, the unit is ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units))
 
   END SUBROUTINE plume_inject_box
 
@@ -1581,14 +1581,14 @@ CONTAINS
                new_units      = MOLECULES_SPECIES_PER_CM3,                   &
                previous_units = previous_units_temp,                              &
                RC             = RC                                          )
-         vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
-         mass_SO2_debug = Spc(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
-         mass_SO4_debug = Spc(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
-         mass_OH_debug = Spc(id_OH_debug)%Conc(69, 20, 39) * vol_debug
-         WRITE(6,*) 'Debug: BZ: In this dynamic time step: mass of SO2 = ', &
-               mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
-               'mass of OH = ', mass_OH_debug, ' air volume = ', &
-               vol_debug
+         ! vol_debug    = State_Met%AIRVOL(69, 20, 39) * 1.0e+6_fp
+         ! mass_SO2_debug = Spc(id_SO2_debug)%Conc(69, 20, 39) * vol_debug
+         ! mass_SO4_debug = Spc(id_SO4_debug)%Conc(69, 20, 39) * vol_debug
+         ! mass_OH_debug = Spc(id_OH_debug)%Conc(69, 20, 39) * vol_debug
+         ! WRITE(6,*) 'Debug: BZ: In this dynamic time step: mass of SO2 = ', &
+         !       mass_SO2_debug, ' mass of SO4 = ', mass_SO4_debug, &
+         !       'mass of OH = ', mass_OH_debug, ' air volume = ', &
+         !       vol_debug
          ! convert unit back
          CALL Convert_Spc_Units(                                            &
                   Input_Opt      = Input_Opt,                                   &
@@ -1598,7 +1598,7 @@ CONTAINS
                   new_units      = previous_units_temp,                   &
                   RC             = RC                                          )
       ENDIF
-      WRITE(6,'(a)') 'Debug (BZ): Plume: after Plume box model and unit conversion: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
+      ! WRITE(6,'(a)') 'Debug (BZ): Plume: after Plume box model and unit conversion: Unit for SO2 is: ' // TRIM(UNIT_STR(State_Chm%Species(id_SO2)%Units)) 
       RETURN
    ENDIF
     
@@ -3311,7 +3311,7 @@ CONTAINS
     !REAL(dp)                      :: local_RCONST(NREACT)
     REAL(fp)                      :: H2SO4_RATE_2d(n_x_max,n_y_max) ! H2SO4 prod rate [kg s-1]
     REAL(fp)                      :: H2SO4_RATE_1d(n_slab_max) ! H2SO4 prod rate [kg s-1]
-    REAL(fp)                      :: PSO4AQ_RATE_2d(n_x_max,n_y_max) ! Cld chem sulfate prod rate [kg s-1]
+    !REAL(fp)                      :: PSO4AQ_RATE_2d(n_x_max,n_y_max) ! Cld chem sulfate prod rate [kg s-1]
     REAL(fp)                      :: K_SO2_OH, K_HO2_NO, K_HO2_O3
     REAL(fp)                      :: full_exchange_conc
     REAL(fp)                      :: chem_debug_value
@@ -3330,10 +3330,10 @@ CONTAINS
     REAL(fp)                      :: recycle_frac
     REAL(fp)                      :: OH_min_diag_2D(n_x_max,n_y_max)
     REAL(fp)                      :: N_SO2_OH_2D(n_x_max,n_y_max), N_HO2_NO_2D(n_x_max,n_y_max),N_HO2_O3_2D(n_x_max,n_y_max)
-    REAL(fp)                      :: d_N_SO2_OH_2D(n_x_max,n_y_max), d_N_HO2_NO_2D(n_x_max,n_y_max),d_N_HO2_O3_2D(n_x_max,n_y_max)
+    ! REAL(fp)                      :: d_N_SO2_OH_2D(n_x_max,n_y_max), d_N_HO2_NO_2D(n_x_max,n_y_max),d_N_HO2_O3_2D(n_x_max,n_y_max)
     REAL(fp)                      :: OH_min_diag_1D(n_slab_max)
     REAL(fp)                      :: N_SO2_OH_1D(n_slab_max), N_HO2_NO_1D(n_slab_max),N_HO2_O3_1D(n_slab_max)
-    REAL(fp)                      :: d_N_SO2_OH_1D(n_slab_max), d_N_HO2_NO_1D(n_slab_max),d_N_HO2_O3_1D(n_slab_max)
+    ! REAL(fp)                      :: d_N_SO2_OH_1D(n_slab_max), d_N_HO2_NO_1D(n_slab_max),d_N_HO2_O3_1D(n_slab_max)
     REAL(fp)                      :: NO_mass_GC, O3_mass_GC, f_NO_GC, f_O3_GC
     REAL(fp), ALLOCATABLE         :: box_concnt_2D(:,:,:), box_concnt_2D_prev(:,:,:)
     REAL(fp), ALLOCATABLE         :: box_concnt_1D(:,:), box_concnt_1D_prev(:,:)
@@ -3467,7 +3467,7 @@ CONTAINS
     doSuppress             =   .FALSE.
     H2SO4_RATE_2d          =    0.0_fp
     H2SO4_RATE_1d          =    0.0_fp
-    PSO4AQ_RATE_2d         =    0.0_fp
+    ! PSO4AQ_RATE_2d         =    0.0_fp
 
     ! RXN_O3_1 specifies: O3 + hv -> O2 + O
     ! RXN_O3_2 specifies: O3 + hv -> O2 + O(1D)
@@ -3543,9 +3543,9 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
       N_SO2_OH_1D     = 0.0_fp
       N_HO2_NO_1D     = 0.0_fp
       N_HO2_O3_1D     = 0.0_fp
-      d_N_SO2_OH_1D     = 0.0_fp
-      d_N_HO2_NO_1D     = 0.0_fp
-      d_N_HO2_O3_1D     = 0.0_fp
+      ! d_N_SO2_OH_1D     = 0.0_fp
+      ! d_N_HO2_NO_1D     = 0.0_fp
+      ! d_N_HO2_O3_1D     = 0.0_fp
       ! mass_S_SO2_4_1D = mass_S_SO2_4_1D + SUM(Plume1d_curr%CONCNT1D(:,id_SO2_p)) * Vgrid_1D
       ! mass_S_SO4_4_1D = mass_S_SO4_4_1D + SUM(Plume1d_curr%CONCNT1D(:,id_SO4_p)) * Vgrid_1D
       ! Write (6, *) 'Debug: BZ:  (1-D chem before - 1), SO2 mass = ', SUM(box_concnt_1D(:,id_SO2_p)) * Vgrid_1D, &
@@ -3618,17 +3618,17 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
       SO2_bg_old = Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
       
       ! calculate the background chemistry as the reference
-      SO2_ref     = SO2_bg_old
-      SO4_ref     = 0.0_fp
-      OH_ref      = OH_bg_old
-      HO2_ref     = HO2_bg_old
-      PH2SO4_ref  = 0.0_fp
+      ! SO2_ref     = SO2_bg_old
+      ! SO4_ref     = 0.0_fp
+      ! OH_ref      = OH_bg_old
+      ! HO2_ref     = 0.0_fp ! HO2_bg_old
+      ! PH2SO4_ref  = 0.0_fp
 
-      CALL CHEM_SO2_HOX_REDUCED( &
-            Dt, K_SO2_OH, K_HO2_NO, K_HO2_O3, &
-            NO_bg_old, O3_bg_old, &
-            SO2_ref, SO4_ref, OH_ref, HO2_ref, PH2SO4_ref, &
-            OH_min_ref, X_SO2_OH_ref, X_HO2_NO_ref, X_HO2_O3_ref, n_sub_out_ref )
+      ! CALL CHEM_SO2_HOX_REDUCED( &
+      !       Dt, K_SO2_OH, K_HO2_NO, K_HO2_O3, &
+      !       NO_bg_old, O3_bg_old, &
+      !       SO2_ref, SO4_ref, OH_ref, HO2_ref, PH2SO4_ref, &
+      !       OH_min_ref, X_SO2_OH_ref, X_HO2_NO_ref, X_HO2_O3_ref, n_sub_out_ref )
 
       box_concnt_1D_prev = box_concnt_1D
       ! n_debug_chem     =  0
@@ -3702,7 +3702,7 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          SO2_local    = box_concnt_1D_prev(i_slab,id_SO2_p)
          SO4_local    = box_concnt_1D_prev(i_slab,id_SO4_p)
          OH_local     = OH_bg_old
-         HO2_local    = HO2_bg_old
+         HO2_local    = 0.0_fp !HO2_bg_old
          PH2SO4_local = 0.0_fp
 
          CALL CHEM_SO2_HOX_REDUCED( &
@@ -3714,8 +3714,8 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          box_concnt_1D(i_slab,id_SO2_p)    = SO2_local
          box_concnt_1D(i_slab,id_SO4_p)    = SO4_local
          box_concnt_1D(i_slab,id_PH2SO4_p) = PH2SO4_local
-         box_concnt_1D(i_slab,id_OH_p)  = OH_local  - OH_ref
-         box_concnt_1D(i_slab,id_HO2_p) = HO2_local - HO2_ref
+         box_concnt_1D(i_slab,id_OH_p)  = OH_local  - OH_bg_old !- OH_ref
+         box_concnt_1D(i_slab,id_HO2_p) = HO2_local !- HO2_ref
 
          H2SO4_RATE_1D(i_slab) = &
            PH2SO4_local / AVO * 98.e-3_fp * &
@@ -3726,9 +3726,10 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          N_SO2_OH_1D(i_slab)    = X_SO2_OH_local * Vgrid_1D
          N_HO2_NO_1D(i_slab)    = X_HO2_NO_local * Vgrid_1D
          N_HO2_O3_1D(i_slab)    = X_HO2_O3_local * Vgrid_1D
-         d_N_SO2_OH_1D(i_slab)    = (X_SO2_OH_local-X_SO2_OH_ref) * Vgrid_1D
-         d_N_HO2_NO_1D(i_slab)    = (X_HO2_NO_local-X_HO2_NO_ref) * Vgrid_1D
-         d_N_HO2_O3_1D(i_slab)    = (X_HO2_O3_local-X_HO2_O3_ref) * Vgrid_1D
+         ! d_N_SO2_OH_1D(i_slab)    = (X_SO2_OH_local-X_SO2_OH_ref) * Vgrid_1D
+         ! d_N_HO2_NO_1D(i_slab)    = (X_HO2_NO_local-X_HO2_NO_ref) * Vgrid_1D
+         ! d_N_HO2_O3_1D(i_slab)    = (X_HO2_O3_local-X_HO2_O3_ref) * Vgrid_1D
+         
       ENDDO
       !$OMP END PARALLEL DO
       
@@ -3766,13 +3767,13 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
                   SUM(box_concnt_1D(:,id_HO2_p)) * Vgrid_1D
 
       mass_NO_consume_plume(i_lon,i_lat,i_lev) = &
-                  mass_NO_consume_plume(i_lon,i_lat,i_lev) + SUM(d_N_HO2_NO_1D)
+                  mass_NO_consume_plume(i_lon,i_lat,i_lev) + SUM(N_HO2_NO_1D)
       mass_O3_consume_plume(i_lon,i_lat,i_lev) = &
-                  mass_O3_consume_plume(i_lon,i_lat,i_lev) + SUM(d_N_HO2_O3_1D)
-      IF (SUM(d_N_SO2_OH_1D) > 0.0_fp) THEN
+                  mass_O3_consume_plume(i_lon,i_lat,i_lev) + SUM(N_HO2_O3_1D)
+      IF (SUM(N_SO2_OH_1D) > 0.0_fp) THEN
          recycle_frac = &
-            (SUM(d_N_HO2_NO_1D) + SUM(d_N_HO2_O3_1D)) / &
-               SUM(d_N_SO2_OH_1D)
+            (SUM(N_HO2_NO_1D) + SUM(N_HO2_O3_1D)) / &
+               SUM(N_SO2_OH_1D)
       ELSE
          recycle_frac = 0.0_fp
       ENDIF
@@ -3789,7 +3790,19 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
                REAL(SUM(nsub_diag_1D), fp) / REAL(n_slab_max, fp), &
                REAL(MAXVAL(nsub_diag_1D), fp)
                
-      
+      ! IF (i_lon == 69 .AND. i_lat == 25 .AND. i_lev == 39.AND.(time_elapsed >= 117000.0_fp)) THEN
+      !    WRITE(6,*) '(Debug: BZ) 1D plume OH contribution'
+      !    WRITE(6,*) ' plume = ', Plume1d_curr%label
+      !    WRITE(6,*) ' OH_bg = ', OH_bg_old
+      !    !WRITE(6,*) ' OH_ref = ', OH_ref
+      !    WRITE(6,*) ' plume volume frac = ', &
+      !       Vgrid_1D * REAL(n_slab_max,fp) / Vgrid_EU
+      !    WRITE(6,*) ' plume dOH_grid = ', &
+      !       SUM(box_concnt_1D(:,id_OH_p)) * Vgrid_1D / Vgrid_EU
+      !    WRITE(6,*) ' cumulative OH consumption = ', &
+      !       mass_OH_consume_plume(i_lon,i_lat,i_lev) / Vgrid_EU
+      ! ENDIF
+
       ! consumed OH molec should be equal to consumed SO2
       ! consumed SO2
       ! dN_SO2 = SUM(box_concnt_1D_prev(:,id_SO2_p)-box_concnt_1D(:,id_SO2_p))* Vgrid_1D
@@ -4201,9 +4214,9 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
       N_SO2_OH_2D     = 0.0_fp
       N_HO2_NO_2D     = 0.0_fp
       N_HO2_O3_2D     = 0.0_fp
-      d_N_SO2_OH_2D     = 0.0_fp
-      d_N_HO2_NO_2D     = 0.0_fp
-      d_N_HO2_O3_2D     = 0.0_fp
+      ! d_N_SO2_OH_2D     = 0.0_fp
+      ! d_N_HO2_NO_2D     = 0.0_fp
+      ! d_N_HO2_O3_2D     = 0.0_fp
       
       Vplume_frac =  (Vplume_2D_tot(i_lon, i_lat, i_lev) + Vplume_1D_tot(i_lon, i_lat, i_lev)) /  Vgrid_EU
       ! Volume criteria, if total plume volume within grid cell larger than a threshold, dissolve the oldest plume. 
@@ -4233,18 +4246,18 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
       O3_bg_old  = Spc(id_O3)%Conc(i_lon,i_lat,i_lev)
       SO2_bg_old = Spc(id_SO2)%Conc(i_lon,i_lat,i_lev)
       
-      ! calculate the background chemistry as the reference
-      SO2_ref     = SO2_bg_old
-      SO4_ref     = 0.0_fp
-      OH_ref      = OH_bg_old
-      HO2_ref     = HO2_bg_old
-      PH2SO4_ref  = 0.0_fp
+      ! ! calculate the background chemistry as the reference
+      ! SO2_ref     = SO2_bg_old
+      ! SO4_ref     = 0.0_fp
+      ! OH_ref      = OH_bg_old
+      ! HO2_ref     = HO2_bg_old
+      ! PH2SO4_ref  = 0.0_fp
 
-      CALL CHEM_SO2_HOX_REDUCED( &
-               Dt, K_SO2_OH, K_HO2_NO, K_HO2_O3, &
-               NO_bg_old, O3_bg_old, &
-               SO2_ref, SO4_ref, OH_ref, HO2_ref, PH2SO4_ref, &
-               OH_min_ref, X_SO2_OH_ref, X_HO2_NO_ref, X_HO2_O3_ref, n_sub_out_ref  )
+      ! CALL CHEM_SO2_HOX_REDUCED( &
+      !          Dt, K_SO2_OH, K_HO2_NO, K_HO2_O3, &
+      !          NO_bg_old, O3_bg_old, &
+      !          SO2_ref, SO4_ref, OH_ref, HO2_ref, PH2SO4_ref, &
+      !          OH_min_ref, X_SO2_OH_ref, X_HO2_NO_ref, X_HO2_O3_ref, n_sub_out_ref  )
 
       ! ! Perform the exact solution for SO2+OH->SO4 chemistry here
       ! SO2_eq_old = &
@@ -4400,7 +4413,7 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          SO2_local    = box_concnt_2D_prev(i_x, i_y, id_SO2_p)
          SO4_local    = box_concnt_2D_prev(i_x, i_y, id_SO4_p)
          OH_local     = OH_bg_old
-         HO2_local    = HO2_bg_old
+         HO2_local    = 0.0_fp ! HO2_bg_old
          PH2SO4_local = 0.0_fp
 
          CALL CHEM_SO2_HOX_REDUCED( &
@@ -4412,8 +4425,8 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          box_concnt_2D(i_x, i_y,id_SO2_p)    = SO2_local
          box_concnt_2D(i_x, i_y,id_SO4_p)    = SO4_local
          box_concnt_2D(i_x, i_y,id_PH2SO4_p) = PH2SO4_local
-         box_concnt_2D(i_x, i_y,id_OH_p)     = OH_local  - OH_ref
-         box_concnt_2D(i_x, i_y,id_HO2_p)    = HO2_local - HO2_ref
+         box_concnt_2D(i_x, i_y,id_OH_p)     = OH_local  - OH_bg_old
+         box_concnt_2D(i_x, i_y,id_HO2_p)    = HO2_local ! - HO2_ref
 
          H2SO4_RATE_2D(i_x,i_y) = &
             PH2SO4_local / AVO * 98.e-3_fp * &
@@ -4424,9 +4437,10 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
          N_SO2_OH_2D(i_x,i_y)     = X_SO2_OH_local * Vgrid_2D
          N_HO2_NO_2D(i_x,i_y)     = X_HO2_NO_local * Vgrid_2D
          N_HO2_O3_2D(i_x,i_y)     = X_HO2_O3_local * Vgrid_2D
-         d_N_SO2_OH_2D(i_x,i_y)    = (X_SO2_OH_local-X_SO2_OH_ref) * Vgrid_2D
-         d_N_HO2_NO_2D(i_x,i_y)    = (X_HO2_NO_local-X_HO2_NO_ref) * Vgrid_2D
-         d_N_HO2_O3_2D(i_x,i_y)    = (X_HO2_O3_local-X_HO2_O3_ref) * Vgrid_2D
+         ! d_N_SO2_OH_2D(i_x,i_y)    = (X_SO2_OH_local-X_SO2_OH_ref) * Vgrid_2D
+         ! d_N_HO2_NO_2D(i_x,i_y)    = (X_HO2_NO_local-X_HO2_NO_ref) * Vgrid_2D
+         ! d_N_HO2_O3_2D(i_x,i_y)    = (X_HO2_O3_local-X_HO2_O3_ref) * Vgrid_2D
+
 
         ENDDO ! DO i_x = 1, n_x_max, 1
       ENDDO ! i_y = 1, n_y_max, 1
@@ -4465,13 +4479,13 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
                   mass_HO2_consume_plume(i_lon,i_lat,i_lev) - &
                   SUM(box_concnt_2D(:,:,id_HO2_p))*Vgrid_2D
       mass_NO_consume_plume(i_lon,i_lat,i_lev) = &
-                  mass_NO_consume_plume(i_lon,i_lat,i_lev) + SUM(d_N_HO2_NO_2D)
+                  mass_NO_consume_plume(i_lon,i_lat,i_lev) + SUM(N_HO2_NO_2D)
       mass_O3_consume_plume(i_lon,i_lat,i_lev) = &
-                  mass_O3_consume_plume(i_lon,i_lat,i_lev) + SUM(d_N_HO2_O3_2D)
-       IF (SUM(d_N_SO2_OH_2D) > 0.0_fp) THEN
+                  mass_O3_consume_plume(i_lon,i_lat,i_lev) + SUM(N_HO2_O3_2D)
+       IF (SUM(N_SO2_OH_2D) > 0.0_fp) THEN
          recycle_frac = &
-            (SUM(d_N_HO2_NO_2D) + SUM(d_N_HO2_O3_2D)) / &
-               SUM(d_N_SO2_OH_2D)
+            (SUM(N_HO2_NO_2D) + SUM(N_HO2_O3_2D)) / &
+               SUM(N_SO2_OH_2D)
       ELSE
          recycle_frac = 0.0_fp
       ENDIF
@@ -4488,6 +4502,20 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
                REAL(SUM(nsub_diag_2D), fp) / &
                            REAL(n_x_max*n_y_max, fp), &
                REAL(MAXVAL(nsub_diag_2D), fp)
+
+      ! IF (i_lon == 69 .AND. i_lat == 25 .AND. i_lev == 39.AND.(time_elapsed>= 117000.0_fp)) THEN
+      !       WRITE(6,*) '(Debug: BZ) 2D plume OH contribution'
+      !       WRITE(6,*) ' plume = ', Plume2d_curr%label
+      !       WRITE(6,*) ' OH_bg = ', OH_bg_old
+      !       !WRITE(6,*) ' OH_ref = ', OH_ref
+      !       WRITE(6,*) ' plume volume frac = ', &
+      !          Vgrid_2D * REAL(n_x_max*n_y_max,fp) / Vgrid_EU
+      !       WRITE(6,*) ' plume dOH_grid = ', &
+      !          SUM(box_concnt_2D(:,:,id_OH_p)) * Vgrid_2D / Vgrid_EU
+      !       WRITE(6,*) ' cumulative OH consumption = ', &
+      !          mass_OH_consume_plume(i_lon,i_lat,i_lev) / Vgrid_EU
+      !    ENDIF
+
       ! consumed OH molec should be equal to consumed SO2
       ! dN_SO2 = SUM(box_concnt_2D_prev(:,:, id_SO2_p) - box_concnt_2D(:,:, id_SO2_p)) * Vgrid_2D
       ! mass_OH_consum_plume(i_lon,i_lat,i_lev) = &
@@ -4948,12 +4976,12 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
       IF (Core_Mean .lt. Conc_background_Mean ) THEN
          Plume2d_curr%IsDissolve = .True.
       ENDIF
-#ifdef TOMAS
+!#ifdef TOMAS
    !Write (6, *) 'Debug: BZ:  (2-D test grid) after plume microphysics, SO4 (molec)= ', box_concnt_2D(x_test,y_test, id_SO4_p)
    !Write (6, *) 'Debug: BZ: (2-D test grid) after plume microphysics, Nk bin 15 (molec)= ', box_concnt_2D(x_test,y_test, 53)
    !Write (6, *) 'Debug: BZ: (2-D test grid) after plume microphysics, Nk bin 15 (molec)= ', Plume2d_curr%CONCNT2d(x_test,y_test, 53)
    !Write (6, *) 'Debug: BZ: (2-D test grid) after plume microphysics, SF bin 15 (molec)= ', box_concnt_2D(x_test,y_test, 54)
-#endif 
+!#endif 
 1112  CONTINUE
       ! mass_S_SO2_5_2D = mass_S_SO2_5_2D + SUM(Plume2d_curr%CONCNT2D(:,:,id_SO2_p)) * Vgrid_2D
       ! mass_S_SO4_5_2D = mass_S_SO4_5_2D + SUM(Plume2d_curr%CONCNT2D(:,:,id_SO4_p)) * Vgrid_2D
@@ -5592,7 +5620,25 @@ IF(.NOT.ASSOCIATED(Plume1d_head)) GOTO 400
                OH_new_EU = Spc(id_OH)%Conc(i_lon,i_lat,i_lev) - &
                      (mass_OH_consume_plume(i_lon, i_lat, i_lev) / Vgrid_EU)
                IF (OH_new_EU < -1.0e-12_fp) THEN
-                  WRITE(errMsg, '(A,3I6,A,ES14.6,A,ES14.6)' ) &
+                  Vplume_frac = &
+                     (Vplume_2D_tot(i_lon,i_lat,i_lev) + &
+                     Vplume_1D_tot(i_lon,i_lat,i_lev)) / Vgrid_EU
+
+                  WRITE(6,*) '(Debug: BZ) OH inventory failure'
+                  WRITE(6,*) ' grid = ', i_lon, i_lat, i_lev
+                  WRITE(6,*) ' OH_bg = ', Spc(id_OH)%Conc(i_lon,i_lat,i_lev)
+                  WRITE(6,*) ' OH_consume = ', &
+                     mass_OH_consume_plume(i_lon,i_lat,i_lev) / Vgrid_EU
+                  WRITE(6,*) ' OH_consume/OH_bg = ', &
+                     (mass_OH_consume_plume(i_lon,i_lat,i_lev) / Vgrid_EU) / &
+                     Spc(id_OH)%Conc(i_lon,i_lat,i_lev)
+                  WRITE(6,*) ' Vplume_frac = ', Vplume_frac
+                  WRITE(6,*) ' Vplume_1D/Vgrid = ', &
+                     Vplume_1D_tot(i_lon,i_lat,i_lev) / Vgrid_EU
+                  WRITE(6,*) ' Vplume_2D/Vgrid = ', &
+                     Vplume_2D_tot(i_lon,i_lat,i_lev) / Vgrid_EU
+
+                  WRITE(errMsg, '(A,3I6,2(1X,ES14.6))' ) &
                      'ERROR: plume OH consumption exceeds GC OH inventory', &
                            i_lon, i_lat, i_lev, &
                            Spc(id_OH)%Conc(i_lon,i_lat,i_lev), &
